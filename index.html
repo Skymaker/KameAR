@@ -33,6 +33,16 @@
   button:disabled { opacity: 0.45; cursor: default; }
   select { flex: 1; min-width: 0; }
   select option { color: #111; }
+  .check { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 12px; }
+  .check input { accent-color: var(--accent); }
+  #tests { position: absolute; right: 12px; top: 12px; width: min(460px, calc(100vw - 24px)); max-height: calc(100vh - 24px);
+    overflow: auto; padding: 12px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); font-size: 12px; }
+  #tests h2 { margin: 0 0 8px; font-size: 14px; }
+  #tests ul { margin: 0; padding: 0; list-style: none; }
+  #tests li { padding: 2px 0; }
+  #tests .ok::before { content: "✓ "; color: #7ee787; }
+  #tests .fail { color: #ffb3b3; }
+  #tests .fail::before { content: "✗ "; }
   .servo { display: grid; grid-template-columns: 118px 1fr 34px; align-items: center; gap: 6px; margin: 3px 0; }
   .servo label { color: var(--muted); font-size: 12px; white-space: nowrap; }
   .servo output { text-align: right; font-variant-numeric: tabular-nums; }
@@ -63,7 +73,7 @@
   <div id="status">Cargando el modelo…</div>
   <div id="panel">
     <h1>KameAR</h1>
-    <p class="sub">Fase 0 · modelo articulado y AR mínima</p>
+    <p class="sub">Fase 1 · marchas del firmware</p>
     <div class="row">
       <button id="btnAR" class="primary" disabled>Entrar en AR</button>
       <button id="btnHome">Home</button>
@@ -74,6 +84,7 @@
         <option value="">Marcha (vista previa)…</option>
       </select>
       <button id="btnStop">Parar</button>
+      <label class="check"><input type="checkbox" id="chkLoop" checked> Repetir</label>
     </div>
     <details class="servos" open>
       <summary>Servos</summary>
@@ -132,8 +143,12 @@ const SERVO_LIMITS = (() => {
 })();
 
 /* ==========================================================================
- * gait — osciladores y marchas (port de Octosnake y Kame)
- * Fase 0: solo las marchas definidas por tabla. El resto llega en la fase 1.
+ * gait — port de las marchas del firmware (Octosnake y Kame)
+ *
+ * Un movimiento es una lista de segmentos. Cada segmento tiene una duración y
+ * una función sample(t, start) que da los 8 ángulos en el instante t (ms),
+ * siendo `start` la postura con la que empieza. Así cualquier movimiento se
+ * puede evaluar en cualquier instante, sin temporizadores, y probarse.
  * ========================================================================== */
 
 /** Postura de reposo del firmware (Kame::home). */
@@ -145,44 +160,146 @@ function homePose() {
 /** Postura de calibración (Kame::zero). */
 function zeroPose() { return Array(8).fill(90); }
 
-/**
- * Construye una marcha de tabla con el mismo patrón que usa el firmware:
- * amplitudes x/z y offsets a partir de la apertura (ap) y la altura (hi).
- * @returns {{period:number[], amplitude:number[], offset:number[], phase:number[]}}
- */
-function tableGait(T, xAmp, zAmp, ap, hi, phase) {
+/** Salida de un oscilador en el instante t, igual que Oscillator::refresh. */
+function osc(amplitude, period, phaseDeg, offset, t) {
+  return amplitude * Math.sin(2 * Math.PI * t / period + phaseDeg * DEG) + offset;
+}
+
+/** Tabla de una marcha con el patrón habitual del firmware: apertura (ap), altura (hi) y avance (frontX). */
+function gaitTable(period, xAmp, zAmp, ap, hi, frontX, phase) {
   return {
-    period: Array(8).fill(T),
+    period,
     amplitude: [xAmp, xAmp, zAmp, zAmp, xAmp, xAmp, zAmp, zAmp],
-    offset: [90 + ap, 90 - ap, 90 - hi, 90 + hi, 90 - ap, 90 + ap, 90 + hi, 90 - hi],
+    offset: [90 + ap - frontX, 90 - ap + frontX, 90 - hi, 90 + hi, 90 - ap - frontX, 90 + ap + frontX, 90 + hi, 90 - hi],
     phase,
   };
 }
+const all = (T) => Array(8).fill(T);
+/** Periodos de las marchas de paso: las patas (servos 2, 3, 6, 7) oscilan al doble de frecuencia. */
+const stepPeriods = (T) => [T, T, T / 2, T / 2, T, T, T / 2, T / 2];
 
-/** Marchas de tabla, con los valores de kame.cpp. Periodos en ms. */
-const GAITS = {
-  'Girar a la derecha': tableGait(600, 15, 15, 15, 23, [0, 180, 90, 90, 180, 0, 90, 90]),
-  'Girar a la izquierda': tableGait(600, 15, 15, 15, 23, [180, 0, 90, 90, 0, 180, 90, 90]),
-  'Bailar': tableGait(1000, 0, 40, 30, 20, [0, 0, 0, 270, 0, 0, 90, 180]),
-  'Adelante-atrás': tableGait(1000, 30, 25, 20, 30, [0, 180, 270, 90, 0, 180, 90, 270]),
-  'Arriba-abajo': tableGait(1000, 0, 35, 20, 25, [0, 0, 90, 270, 180, 180, 270, 90]),
-  'Moonwalk': {
-    period: Array(8).fill(2000),
-    amplitude: [0, 0, 45, 45, 0, 0, 45, 45],
-    offset: Array(8).fill(90),
-    phase: [0, 0, 0, 120, 0, 0, 180, 290],
+const seg = {
+  /** Kame::execute: los 8 osciladores a la vez durante `steps` periodos. */
+  oscillate(table, steps) {
+    const { period, amplitude, offset, phase } = table;
+    return {
+      duration: period[0] * steps,
+      sample: (t) => period.map((T, i) => osc(amplitude[i], T, phase[i], offset[i], t)),
+    };
   },
-  'Flexiones': {
-    period: Array(8).fill(1000),
-    amplitude: [0, 0, 40, 40, 0, 0, 0, 0],
-    offset: [90, 90, 90 - 30, 90 + 30, 90 - 65, 90 + 65, 90 + 30, 90 - 30],
-    phase: [0, 0, 0, 180, 0, 0, 0, 180],
+  /**
+   * Bucle de Kame::walk / backward / omniWalk: las caderas oscilan siempre; en
+   * cada medio periodo solo se mueve una diagonal de patas (3 y 6, luego 2 y 7)
+   * y la otra conserva la última posición que recibió.
+   */
+  stepping(table, steps) {
+    const { period, amplitude, offset, phase } = table;
+    const half = period[0] / 2;
+    return {
+      duration: period[0] * steps,
+      sample: (t, start) => {
+        const window = Math.floor(t / half), side = window % 2;
+        return period.map((T, i) => {
+          const isHip = i === 0 || i === 1 || i === 4 || i === 5;
+          const live = isHip || (side === 0 ? (i === 3 || i === 6) : (i === 2 || i === 7));
+          if (live) return osc(amplitude[i], T, phase[i], offset[i], t);
+          if (window === 0) return start[i]; // todavía no ha recibido ninguna orden
+          return osc(amplitude[i], T, phase[i], offset[i], window * half);
+        });
+      },
+    };
   },
+  /** Kame::moveServos: interpolación lineal hasta `target` (inmediata si dura 10 ms o menos). */
+  ramp(ms, target) {
+    return {
+      duration: ms,
+      sample: (t, start) => (ms > 10 ? start.map((v, i) => v + (target[i] - v) * Math.min(1, t / ms)) : target.slice()),
+    };
+  },
+  /** delay(): mantiene la postura. */
+  hold(ms) { return { duration: ms, sample: (t, start) => start.slice() }; },
+  /** Postura inmediata (home, zero). */
+  pose(target) { return { duration: 0, sample: () => target.slice() }; },
 };
 
-/** Salida de un oscilador en el instante t (ms), igual que Oscillator::refresh. */
-function oscillate(gait, i, t) {
-  return gait.amplitude[i] * Math.sin(2 * Math.PI * t / gait.period[i] + gait.phase[i] * DEG) + gait.offset[i];
+/** Las funciones de Kame (kame.cpp) como listas de segmentos. Periodos en ms. */
+const kame32 = {
+  walk: (steps, T) => [seg.stepping(gaitTable(stepPeriods(T), 15, 20, 20, 10, 12, [90, 90, 270, 90, 270, 270, 90, 270]), steps)],
+  backward: (steps, T) => [seg.stepping(gaitTable(stepPeriods(T), 15, 20, 20, 10, -12, [270, 270, 270, 90, 90, 90, 90, 270]), steps)],
+  omniWalk: (steps, T) => [seg.stepping(gaitTable(stepPeriods(T), 0, 20, 20, 10, 0, [90, 90, 270, 90, 270, 270, 90, 270]), steps)],
+  run: (steps, T) => [seg.oscillate(gaitTable(all(T), 15, 15, 15, 15, 6, [0, 0, 90, 90, 180, 180, 90, 90]), steps)],
+  turnL: (steps, T) => [seg.oscillate(gaitTable(all(T), 15, 15, 15, 23, 0, [180, 0, 90, 90, 0, 180, 90, 90]), steps)],
+  turnR: (steps, T) => [seg.oscillate(gaitTable(all(T), 15, 15, 15, 23, 0, [0, 180, 90, 90, 180, 0, 90, 90]), steps)],
+  dance: (steps, T) => [seg.oscillate(gaitTable(all(T), 0, 40, 30, 20, 0, [0, 0, 0, 270, 0, 0, 90, 180]), steps)],
+  frontBack: (steps, T) => [seg.oscillate(gaitTable(all(T), 30, 25, 20, 30, 0, [0, 180, 270, 90, 0, 180, 90, 270]), steps)],
+  upDown: (steps, T) => [seg.oscillate(gaitTable(all(T), 0, 35, 20, 25, 0, [0, 0, 90, 270, 180, 180, 270, 90]), steps)],
+  moonwalkL: (steps, T) => [seg.oscillate({
+    period: all(T), amplitude: [0, 0, 45, 45, 0, 0, 45, 45], offset: all(90), phase: [0, 0, 0, 120, 0, 0, 180, 290],
+  }, steps)],
+  pushUp: (steps, T) => [seg.oscillate({
+    period: all(T), amplitude: [0, 0, 40, 40, 0, 0, 0, 0],
+    offset: [90, 90, 90 - 30, 90 + 30, 90 - 65, 90 + 65, 90 + 30, 90 - 30], phase: [0, 0, 0, 180, 0, 0, 0, 180],
+  }, steps)],
+  hello: () => [
+    seg.ramp(150, SIT_POSE), seg.hold(200),
+    seg.oscillate({
+      period: all(350), amplitude: [0, 50, 0, 50, 0, 0, 0, 0],
+      offset: [90 + 15, 40, 90 - 65, 90, 90 + 20, 90 - 20, 90 + 10, 90 - 10], phase: [0, 0, 0, 90, 0, 0, 0, 0],
+    }, 4),
+    seg.ramp(500, [160, 20, 90, 90, 90 - 20, 90 + 20, 90 + 10, 90 - 10]), seg.hold(200),
+  ],
+  jump: () => [
+    seg.ramp(150, SIT_POSE), seg.hold(200),
+    seg.pose([90 + 20, 90 - 20, 90 - 35, 90 + 35, 90 - 60, 90 + 60, 90 + 35, 90 - 35]), seg.hold(100),
+    seg.pose(homePose()),
+  ],
+  home: () => [seg.pose(homePose())],
+  zero: () => [seg.pose(zeroPose())],
+};
+/** Postura «sentado» que usan hello y jump. */
+const SIT_POSE = [90 + 15, 90 - 15, 90 - 65, 90 + 65, 90 + 20, 90 - 20, 90 + 10, 90 - 10];
+
+/**
+ * Movimientos que ofrece la aplicación, con pasos y periodo por defecto.
+ * `loop` indica si tiene sentido repetirlo de forma continua en la vista previa.
+ */
+const MOTIONS = [
+  { id: 'walk', label: 'Avanzar', loop: true, make: (steps = 4, T = 500) => kame32.walk(steps, T) },
+  { id: 'backward', label: 'Retroceder', loop: true, make: (steps = 4, T = 500) => kame32.backward(steps, T) },
+  { id: 'turnL', label: 'Girar a la izquierda', loop: true, make: (steps = 4, T = 600) => kame32.turnL(steps, T) },
+  { id: 'turnR', label: 'Girar a la derecha', loop: true, make: (steps = 4, T = 600) => kame32.turnR(steps, T) },
+  { id: 'run', label: 'Correr', loop: true, make: (steps = 4, T = 500) => kame32.run(steps, T) },
+  { id: 'omniWalk', label: 'Marcar el paso', loop: true, make: (steps = 4, T = 500) => kame32.omniWalk(steps, T) },
+  { id: 'hello', label: 'Saludar', loop: false, make: () => kame32.hello() },
+  { id: 'jump', label: 'Saltar', loop: false, make: () => kame32.jump() },
+  { id: 'dance', label: 'Bailar', loop: true, make: (steps = 2, T = 1000) => kame32.dance(steps, T) },
+  { id: 'pushUp', label: 'Flexiones', loop: true, make: (steps = 4, T = 1000) => kame32.pushUp(steps, T) },
+  { id: 'upDown', label: 'Arriba-abajo', loop: true, make: (steps = 4, T = 1000) => kame32.upDown(steps, T) },
+  { id: 'frontBack', label: 'Adelante-atrás', loop: true, make: (steps = 2, T = 1000) => kame32.frontBack(steps, T) },
+  { id: 'moonwalkL', label: 'Moonwalk', loop: true, make: (steps = 2, T = 2000) => kame32.moonwalkL(steps, T) },
+];
+
+/**
+ * Encadena los segmentos a partir de una postura inicial.
+ * @returns {{duration:number, end:number[], sample:(t:number)=>number[]}}
+ */
+function compileMotion(segments, startPose) {
+  let t0 = 0, pose = startPose.slice();
+  const parts = segments.map((s) => {
+    const part = { t0, s, start: pose };
+    pose = s.sample(s.duration, pose);
+    t0 += s.duration;
+    return part;
+  });
+  return {
+    duration: t0,
+    end: pose,
+    sample(t) {
+      let part = parts[0];
+      for (const q of parts) { if (q.t0 <= t) part = q; else break; }
+      return part.s.sample(Math.min(Math.max(t - part.t0, 0), part.s.duration), part.start);
+    },
+  };
 }
 
 /* ==========================================================================
@@ -726,9 +843,11 @@ const ui = {
   selGait: document.getElementById('selGait'),
   sliders: [],
   outputs: [],
-  /** Marcha en vista previa y su instante de inicio. */
-  gait: null,
-  gaitStart: 0,
+  chkLoop: document.getElementById('chkLoop'),
+  /** Movimiento en vista previa (compilado), su definición y su instante de inicio. */
+  motion: null,
+  motionDef: null,
+  motionStart: 0,
 
   init() {
     const host = document.getElementById('servos');
@@ -745,10 +864,10 @@ const ui = {
       row.append(label, input, out); host.append(row);
       this.sliders.push(input); this.outputs.push(out);
     });
-    for (const name of Object.keys(GAITS)) this.selGait.add(new Option(name, name));
+    for (const m of MOTIONS) this.selGait.add(new Option(m.label, m.id));
     this.selGait.addEventListener('change', () => {
-      this.gait = GAITS[this.selGait.value] ?? null;
-      this.gaitStart = performance.now();
+      const def = MOTIONS.find((m) => m.id === this.selGait.value);
+      if (def) this.play(def); else this.stopGait();
     });
     document.getElementById('btnStop').addEventListener('click', () => this.stopGait());
     document.getElementById('btnHome').addEventListener('click', () => { this.stopGait(); applyAngles(homePose()); });
@@ -761,7 +880,23 @@ const ui = {
     document.getElementById('panel').addEventListener('beforexrselect', (e) => e.preventDefault());
   },
 
-  stopGait() { this.gait = null; this.selGait.value = ''; },
+  /** Empieza un movimiento desde la postura actual. */
+  play(def) {
+    this.motionDef = def;
+    this.motion = compileMotion(def.make(), robot.angles);
+    this.motionStart = performance.now();
+  },
+
+  stopGait() { this.motion = null; this.motionDef = null; this.selGait.value = ''; },
+
+  /** Avanza la vista previa; se llama en cada fotograma. */
+  tick() {
+    if (!this.motion) return;
+    const t = performance.now() - this.motionStart;
+    if (t < this.motion.duration) { applyAngles(this.motion.sample(t)); return; }
+    applyAngles(this.motion.end);
+    if (this.motionDef.loop && this.chkLoop.checked) this.play(this.motionDef); else this.stopGait();
+  },
 
   showCollision(hits) {
     const el = document.getElementById('collision');
@@ -793,6 +928,115 @@ function applyAngles(angles) {
 }
 
 /* ==========================================================================
+ * selftest — comprobaciones con index.html?test
+ * Valores esperados calculados a mano a partir de las tablas de kame.cpp.
+ * ========================================================================== */
+
+function runSelfTest() {
+  const results = [];
+  const check = (name, ok, detail = '') => results.push({ name, ok: !!ok, detail });
+  const near = (a, b) => Math.abs(a - b) < 1e-6;
+  const sameP = (a, b) => a.length === b.length && a.every((v, i) => near(v, b[i]));
+  const home = homePose();
+  const run = (segments, start = home) => compileMotion(segments, start);
+
+  // Posturas
+  check('home = {110, 70, 55, 125, 70, 110, 125, 55}', sameP(home, [110, 70, 55, 125, 70, 110, 125, 55]));
+  check('zero = 90 en los ocho servos', sameP(zeroPose(), all(90)));
+
+  // Oscilador
+  check('oscilador: A·sin(2πt/T + φ) + offset', near(osc(15, 600, 90, 67, 0), 82) && near(osc(15, 600, 0, 105, 150), 120));
+
+  // turnR(·, 600)
+  let m = run(kame32.turnR(4, 600));
+  check('turnR: duración = pasos × periodo', near(m.duration, 2400));
+  check('turnR: t = 0', sameP(m.sample(0), [105, 75, 82, 128, 75, 105, 128, 82]), m.sample(0).map((v) => v.toFixed(2)).join(', '));
+  check('turnR: t = T/4', sameP(m.sample(150), [120, 60, 67, 113, 60, 120, 113, 67]), m.sample(150).map((v) => v.toFixed(2)).join(', '));
+  // turnL es turnR con las caderas en contrafase
+  const l = run(kame32.turnL(4, 600)).sample(150);
+  check('turnL: caderas en contrafase respecto a turnR', sameP([l[0], l[1], l[4], l[5]], [90, 90, 90, 90]));
+
+  // walk(·, 1000): caderas continuas, patas por diagonales alternas
+  m = run(kame32.walk(2, 1000));
+  check('walk: duración = pasos × periodo', near(m.duration, 2000));
+  let a = m.sample(0);
+  check('walk: t = 0, caderas', sameP([a[0], a[1], a[4], a[5]], [113, 97, 43, 107]));
+  check('walk: t = 0, patas 3 y 6 activas', near(a[3], 120) && near(a[6], 120));
+  check('walk: t = 0, patas 2 y 7 aún sin orden (postura inicial)', near(a[2], home[2]) && near(a[7], home[7]));
+  a = m.sample(600);
+  const lift = 20 * Math.sin(2 * Math.PI * 600 / 500 + 270 * DEG);
+  check('walk: t = 0,6 T, patas 2 y 7 activas', near(a[2], 80 + lift) && near(a[7], 80 + lift));
+  check('walk: t = 0,6 T, patas 3 y 6 retenidas', near(a[3], 120) && near(a[6], 120));
+  a = m.sample(1100);
+  check('walk: t = 1,1 T, patas 2 y 7 retenidas en su último valor', near(a[2], 60) && near(a[7], 60));
+  // backward: mismo patrón con el avance invertido
+  a = run(kame32.backward(2, 1000)).sample(0);
+  check('backward: t = 0, caderas', sameP([a[0], a[1], a[4], a[5]], [107, 43, 97, 113]), [a[0], a[1], a[4], a[5]].join(', '));
+  // omniWalk: caderas quietas
+  a = run(kame32.omniWalk(2, 1000)).sample(333);
+  check('omniWalk: las caderas no oscilan', sameP([a[0], a[1], a[4], a[5]], [110, 70, 70, 110]));
+
+  // pushUp, moonwalk
+  a = run(kame32.pushUp(4, 1000)).sample(250);
+  check('pushUp: t = T/4', sameP(a, [90, 90, 100, 80, 25, 155, 120, 60]), a.map((v) => v.toFixed(2)).join(', '));
+  a = run(kame32.moonwalkL(2, 2000)).sample(0);
+  check('moonwalkL: caderas a 90', sameP([a[0], a[1], a[4], a[5]], [90, 90, 90, 90]));
+
+  // hello y jump: secuencias
+  m = run(kame32.hello());
+  check('hello: duración 150 + 200 + 4·350 + 500 + 200 ms', near(m.duration, 2450));
+  check('hello: a los 150 ms está sentado', sameP(m.sample(150), SIT_POSE));
+  check('hello: a los 75 ms va a medio camino', sameP(m.sample(75), home.map((v, i) => (v + SIT_POSE[i]) / 2)));
+  check('hello: termina con las patas delanteras arriba', sameP(m.end, [160, 20, 90, 90, 70, 110, 100, 80]));
+  m = run(kame32.jump());
+  check('jump: duración 150 + 200 + 100 ms', near(m.duration, 450));
+  check('jump: el impulso es instantáneo', sameP(m.sample(350), [110, 70, 55, 125, 30, 150, 125, 55]));
+  check('jump: termina en home', sameP(m.end, home));
+
+  // Todos los movimientos: dentro del recorrido de los servos y sin choques
+  for (const def of MOTIONS) {
+    const motion = run(def.make());
+    let outOfRange = null, stop = null;
+    for (let t = 0; t <= motion.duration && !stop; t += 10) {
+      // El firmware recorta cada orden a 0–180° (Kame::setServo); «Saludar» lo aprovecha
+      const pose = motion.sample(t).map((v) => Math.min(180, Math.max(0, v)));
+      pose.forEach((v, i) => {
+        if (!outOfRange && (v < SERVO_LIMITS[i][0] - 1e-6 || v > SERVO_LIMITS[i][1] + 1e-6)) {
+          outOfRange = `servo ${i} pide ${v.toFixed(1)}° en t = ${t} ms (tope ${SERVO_LIMITS[i].join('–')}°)`;
+        }
+      });
+    }
+    check(`${def.label}: dentro de los topes mecánicos`, !outOfRange, outOfRange ?? '');
+    robot.setAngles(home);
+    for (let t = 0; t <= motion.duration && !stop; t += 20) {
+      const hits = robot.moveTo(motion.sample(t).map((v) => Math.min(180, Math.max(0, v))));
+      const crash = hits.find((h) => h.legs.length);
+      if (crash) stop = `${crash.text} en t = ${t} ms`;
+    }
+    check(`${def.label}: sin choques entre patas`, !stop, stop ?? '');
+  }
+  applyAngles(home);
+
+  // Informe
+  const failed = results.filter((r) => !r.ok);
+  const box = document.createElement('div');
+  box.id = 'tests';
+  const title = document.createElement('h2');
+  title.textContent = failed.length ? `Autotest: ${failed.length} de ${results.length} fallan` : `Autotest: ${results.length} comprobaciones correctas`;
+  const list = document.createElement('ul');
+  for (const r of results) {
+    const li = document.createElement('li');
+    li.className = r.ok ? 'ok' : 'fail';
+    li.textContent = r.ok || !r.detail ? r.name : `${r.name} — ${r.detail}`;
+    list.append(li);
+  }
+  box.append(title, list);
+  document.getElementById('overlay').append(box);
+  console[failed.length ? 'error' : 'info'](title.textContent, failed);
+  window.kameTest = { results, failed };
+}
+
+/* ==========================================================================
  * main
  * ========================================================================== */
 
@@ -800,10 +1044,7 @@ ui.init();
 ui.sync(robot.angles);
 
 renderer.setAnimationLoop((time, frame) => {
-  if (ui.gait && robot.legs.length) {
-    const t = performance.now() - ui.gaitStart;
-    applyAngles(robot.angles.map((_, i) => oscillate(ui.gait, i, t)));
-  }
+  if (robot.legs.length) ui.tick();
   if (frame && ar.session) ar.update(frame);
   else controls.update();
   renderer.render(scene, camera);
@@ -821,7 +1062,8 @@ try {
   } else {
     setStatus('Modo 3D. Este navegador no ofrece AR (WebXR immersive-ar).');
   }
-  window.kame = { robot, applyAngles, GAITS, platform }; // para depurar desde la consola
+  window.kame = { robot, applyAngles, kame32, MOTIONS, compileMotion, platform }; // para depurar desde la consola
+  if (new URLSearchParams(location.search).has('test')) runSelfTest();
 } catch (e) {
   console.error(e);
   setStatus(`${e.message} Comprueba la conexión y recarga la página.`, true);
