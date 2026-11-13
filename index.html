@@ -1,0 +1,831 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>KameAR</title>
+<style>
+  :root {
+    --bg: #14181d;
+    --panel: rgba(22, 27, 34, 0.88);
+    --line: rgba(255, 255, 255, 0.12);
+    --text: #e8edf2;
+    --muted: #9aa7b4;
+    --accent: #d8f000;
+    --accent-ink: #1a1d00;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text);
+    font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  canvas { display: block; touch-action: none; }
+  #overlay { position: fixed; inset: 0; pointer-events: none; }
+  #overlay > * { pointer-events: auto; }
+  #panel { position: absolute; left: 12px; bottom: 12px; width: min(330px, calc(100vw - 24px));
+    max-height: calc(100vh - 24px); overflow: auto; padding: 12px; border-radius: 12px;
+    background: var(--panel); border: 1px solid var(--line); backdrop-filter: blur(8px); }
+  #panel h1 { margin: 0 0 2px; font-size: 16px; }
+  #panel .sub { margin: 0 0 10px; color: var(--muted); font-size: 12px; }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+  button, select { font: inherit; color: var(--text); background: rgba(255, 255, 255, 0.08);
+    border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; cursor: pointer; }
+  button:hover { background: rgba(255, 255, 255, 0.16); }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; font-weight: 600; }
+  button:disabled { opacity: 0.45; cursor: default; }
+  select { flex: 1; min-width: 0; }
+  select option { color: #111; }
+  .servo { display: grid; grid-template-columns: 118px 1fr 34px; align-items: center; gap: 6px; margin: 3px 0; }
+  .servo label { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .servo output { text-align: right; font-variant-numeric: tabular-nums; }
+  .servo input { width: 100%; accent-color: var(--accent); }
+  details summary { cursor: pointer; color: var(--muted); margin-bottom: 6px; }
+  #status { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); max-width: calc(100vw - 24px);
+    padding: 7px 12px; border-radius: 999px; background: var(--panel); border: 1px solid var(--line);
+    font-size: 13px; text-align: center; }
+  #status:empty { display: none; }
+  #status.error { border-color: #ff6b6b; color: #ffb3b3; border-radius: 12px; }
+  #collision { margin: 8px 0 0; font-size: 12px; color: #ff9d9d; min-height: 1.4em; }
+  #credit { margin: 10px 0 0; font-size: 11px; color: var(--muted); }
+  #credit a { color: inherit; }
+  @media (max-width: 520px) { #panel.collapsed .servos { display: none; } }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
+    "three-mesh-bvh": "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.8.3/build/index.module.js"
+  }
+}
+</script>
+</head>
+<body>
+<div id="overlay">
+  <div id="status">Cargando el modelo…</div>
+  <div id="panel">
+    <h1>KameAR</h1>
+    <p class="sub">Fase 0 · modelo articulado y AR mínima</p>
+    <div class="row">
+      <button id="btnAR" class="primary" disabled>Entrar en AR</button>
+      <button id="btnHome">Home</button>
+      <button id="btnZero">Zero</button>
+    </div>
+    <div class="row">
+      <select id="selGait" aria-label="Marcha">
+        <option value="">Marcha (vista previa)…</option>
+      </select>
+      <button id="btnStop">Parar</button>
+    </div>
+    <details class="servos" open>
+      <summary>Servos</summary>
+      <div id="servos"></div>
+    </details>
+    <p id="collision" role="status"></p>
+    <p id="credit">Modelo 3D y marchas: <a href="https://github.com/JavierIH/kame32" target="_blank" rel="noopener">Kame32</a> de JavierIH, licencia CC BY-SA 4.0.</p>
+  </div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+import { MeshBVH } from 'three-mesh-bvh';
+
+/* ==========================================================================
+ * config — constantes del proyecto
+ * ========================================================================== */
+
+/** Piezas STL del repositorio original, con el commit fijado. */
+const STL_BASE = 'https://cdn.jsdelivr.net/gh/JavierIH/kame32@8f33e489f7425747ab62aeb509777a06d2f14f3e/3d/stl/';
+
+const COLORS = { body: 0x1b1b1d, yellow: 0xd8f000, black: 0x1b1b1d, servo: 0x2f7fe6, horn: 0xf2f2f2 };
+
+/** Orden de los servos del firmware (kame.cpp). */
+const SERVO_NAMES = [
+  'Cadera del. izq.', 'Cadera del. der.', 'Pata del. izq.', 'Pata del. der.',
+  'Cadera tras. izq.', 'Cadera tras. der.', 'Pata tras. izq.', 'Pata tras. der.',
+];
+
+/** Servo de cadera y servo de pata de cada pata: del. izq., del. der., tras. izq., tras. der. */
+const HIP_SERVO = [0, 1, 4, 5];
+const LEG_SERVO = [2, 3, 6, 7];
+
+const DEG = Math.PI / 180;
+
+/**
+ * Topes mecánicos de la pata delantera izquierda, en grados de servo: fuera de
+ * ellos la pata choca consigo misma o con el cuerpo. Medidos con
+ * kame.robot.measureLegLimits() sobre las mallas reales (rejilla de 2°): la
+ * zona libre resultó ser un rectángulo, así que basta un intervalo por servo.
+ * Hay que volver a medirlos si cambian las piezas o el modelo de los servos.
+ */
+const LEG_LIMITS = { hip: [64, 180], leg: [16, 152] };
+
+/** Intervalo permitido de cada uno de los 8 servos. Las patas del tipo derecho son la imagen especular. */
+const SERVO_LIMITS = (() => {
+  const out = [];
+  for (let i = 0; i < 4; i++) {
+    const mirror = ([lo, hi]) => (i === 1 || i === 2 ? [180 - hi, 180 - lo] : [lo, hi]);
+    out[HIP_SERVO[i]] = mirror(LEG_LIMITS.hip);
+    out[LEG_SERVO[i]] = mirror(LEG_LIMITS.leg);
+  }
+  return out;
+})();
+
+/* ==========================================================================
+ * gait — osciladores y marchas (port de Octosnake y Kame)
+ * Fase 0: solo las marchas definidas por tabla. El resto llega en la fase 1.
+ * ========================================================================== */
+
+/** Postura de reposo del firmware (Kame::home). */
+function homePose() {
+  const ap = 20, hi = 35;
+  return [90 + ap, 90 - ap, 90 - hi, 90 + hi, 90 - ap, 90 + ap, 90 + hi, 90 - hi];
+}
+
+/** Postura de calibración (Kame::zero). */
+function zeroPose() { return Array(8).fill(90); }
+
+/**
+ * Construye una marcha de tabla con el mismo patrón que usa el firmware:
+ * amplitudes x/z y offsets a partir de la apertura (ap) y la altura (hi).
+ * @returns {{period:number[], amplitude:number[], offset:number[], phase:number[]}}
+ */
+function tableGait(T, xAmp, zAmp, ap, hi, phase) {
+  return {
+    period: Array(8).fill(T),
+    amplitude: [xAmp, xAmp, zAmp, zAmp, xAmp, xAmp, zAmp, zAmp],
+    offset: [90 + ap, 90 - ap, 90 - hi, 90 + hi, 90 - ap, 90 + ap, 90 + hi, 90 - hi],
+    phase,
+  };
+}
+
+/** Marchas de tabla, con los valores de kame.cpp. Periodos en ms. */
+const GAITS = {
+  'Girar a la derecha': tableGait(600, 15, 15, 15, 23, [0, 180, 90, 90, 180, 0, 90, 90]),
+  'Girar a la izquierda': tableGait(600, 15, 15, 15, 23, [180, 0, 90, 90, 0, 180, 90, 90]),
+  'Bailar': tableGait(1000, 0, 40, 30, 20, [0, 0, 0, 270, 0, 0, 90, 180]),
+  'Adelante-atrás': tableGait(1000, 30, 25, 20, 30, [0, 180, 270, 90, 0, 180, 90, 270]),
+  'Arriba-abajo': tableGait(1000, 0, 35, 20, 25, [0, 0, 90, 270, 180, 180, 270, 90]),
+  'Moonwalk': {
+    period: Array(8).fill(2000),
+    amplitude: [0, 0, 45, 45, 0, 0, 45, 45],
+    offset: Array(8).fill(90),
+    phase: [0, 0, 0, 120, 0, 0, 180, 290],
+  },
+  'Flexiones': {
+    period: Array(8).fill(1000),
+    amplitude: [0, 0, 40, 40, 0, 0, 0, 0],
+    offset: [90, 90, 90 - 30, 90 + 30, 90 - 65, 90 + 65, 90 + 30, 90 - 30],
+    phase: [0, 0, 0, 180, 0, 0, 0, 180],
+  },
+};
+
+/** Salida de un oscilador en el instante t (ms), igual que Oscillator::refresh. */
+function oscillate(gait, i, t) {
+  return gait.amplitude[i] * Math.sin(2 * Math.PI * t / gait.period[i] + gait.phase[i] * DEG) + gait.offset[i];
+}
+
+/* ==========================================================================
+ * robot — carga de piezas y ensamblaje articulado
+ *
+ * Sistema de coordenadas del ensamblaje: el del FreeCAD original, en mm.
+ * Z arriba, el frente del robot mira a -Y y su izquierda es +X.
+ * Regla de los servos: la articulación gira (ángulo - 90)° alrededor de la
+ * dirección del eje de salida del servo (regla de la mano derecha).
+ * ========================================================================== */
+
+const loader = new STLLoader();
+
+/** @returns {Promise<THREE.BufferGeometry>} */
+function loadSTL(name) {
+  return loader.loadAsync(STL_BASE + name).catch(() => {
+    throw new Error(`No se pudo cargar la pieza «${name}» desde el CDN.`);
+  });
+}
+
+/** Copia especular respecto al plano X = 0 (para las piezas del lado derecho). */
+function mirrorX(geometry) {
+  const g = geometry.clone();
+  const p = g.attributes.position.array;
+  for (let i = 0; i < p.length; i += 9) {
+    p[i] = -p[i]; p[i + 3] = -p[i + 3]; p[i + 6] = -p[i + 6];
+    for (let k = 0; k < 3; k++) { // invierte el sentido del triángulo
+      const tmp = p[i + 3 + k]; p[i + 3 + k] = p[i + 6 + k]; p[i + 6 + k] = tmp;
+    }
+  }
+  g.computeVertexNormals();
+  return g;
+}
+
+/**
+ * Modelo simplificado de un microservo SG90 (el repositorio no trae su STL).
+ * Sistema local en mm: el eje de salida es +Z y pasa por el origen, la cara
+ * inferior de las aletas de fijación está en Z = 0 y el cuerpo se alarga hacia +Y.
+ */
+function servoModel(materials) {
+  const g = new THREE.Group();
+  const add = (geometry, material, x, y, z) => {
+    const o = new THREE.Mesh(geometry, material);
+    o.position.set(x, y, z); o.castShadow = true; o.receiveShadow = true;
+    g.add(o);
+  };
+  const cyl = (r, h) => new THREE.CylinderGeometry(r, r, h, 24).rotateX(Math.PI / 2);
+  add(new THREE.BoxGeometry(12.2, 22.5, 22.7), materials.servo, 0, 5.25, -4.55); // cuerpo
+  add(new THREE.BoxGeometry(12.2, 32.2, 2.5), materials.servo, 0, 5.25, 1.25);   // aletas
+  add(cyl(5.9, 4), materials.servo, 0, 0, 8.8);                                  // caja reductora
+  add(cyl(2.8, 4), materials.servo, 0, 6, 8.8);
+  add(cyl(2.3, 3.2), materials.horn, 0, 0, 12.4);                                // eje de salida
+  return g;
+}
+
+/** Brazo del servo (pieza blanca), en el plano XZ, con el eje en el origen y a lo largo de `dir`. */
+function hornModel(materials, dir) {
+  const g = new THREE.Group();
+  const hub = new THREE.Mesh(new THREE.CylinderGeometry(3.5, 3.5, 2.5, 24), materials.horn);
+  const arm = new THREE.Mesh(new THREE.BoxGeometry(17, 1.6, 5), materials.horn);
+  arm.position.x = 8;
+  const tip = new THREE.Mesh(new THREE.CylinderGeometry(2.5, 2.5, 1.6, 16), materials.horn);
+  tip.position.x = 16.5;
+  g.add(hub, arm, tip);
+  g.rotation.y = -Math.atan2(dir.z, dir.x);
+  g.traverse((o) => { o.castShadow = true; });
+  return g;
+}
+
+const _m1 = new THREE.Matrix4(), _m2 = new THREE.Matrix4(), _line = new THREE.Line3();
+const _p = new THREE.Vector3(), _q = new THREE.Vector3();
+
+class KameRobot {
+  constructor() {
+    /** Grupo en coordenadas de Three.js (Y arriba, metros). */
+    this.root = new THREE.Group();
+    /** Grupo en coordenadas del ensamblaje (Z arriba, mm). */
+    this.asm = new THREE.Group();
+    this.asm.rotation.x = -Math.PI / 2;
+    this.asm.scale.setScalar(0.001);
+    this.root.add(this.asm);
+    this.angles = homePose();
+    /** @type {{hip:THREE.Group, legPivot:THREE.Group, linkPivot:THREE.Group, foot:THREE.Group, v:THREE.Vector3}[]} */
+    this.legs = [];
+    /**
+     * Sólidos rígidos para las colisiones. `ref` es la malla cuyo sistema local
+     * sirve de referencia al sólido; `leg` es el índice de su pata (null: cuerpo).
+     * @type {{name:string, leg:number|null, ref:THREE.Mesh, meshes:THREE.Mesh[]}[]}
+     */
+    this.solids = [];
+    /** Parejas de cada pata consigo misma y con el cuerpo (la zona de la articulación se excluye). */
+    this.legPairs = [[], [], [], []];
+    /** Parejas entre patas distintas. */
+    this.crossPairs = [];
+    this.flagged = [];
+  }
+
+  async load() {
+    const [box, cover, bracket, leg, link, foot] = await Promise.all([
+      'body-box.stl', 'body-cover.stl', 'bracket-left-sg90.stl',
+      'leg-left-sg90.stl', 'leg-link.stl', 'foot.stl',
+    ].map(loadSTL));
+
+    // Cada STL viene en su propio sistema; aquí se llevan todos al del ensamblaje,
+    // en la posición de la pata delantera izquierda.
+    const m = new THREE.Matrix4();
+    box.translate(0, 0, -3.5);
+    cover.applyMatrix4(m.makeRotationX(Math.PI)).translate(0, 0, 2);
+    bracket.applyMatrix4(m.makeRotationX(Math.PI / 2));
+    link.applyMatrix4(m.makeRotationX(Math.PI / 2)).translate(66, 8, 42);
+    // La bieleta es acodada: se gira 180° en su plano para que el codo libre el soporte
+    link.applyMatrix4(m.makeRotationY(Math.PI)).translate(160, 0, 50);
+    foot.applyMatrix4(m.makeRotationY(-Math.PI / 2));
+    for (const g of [box, cover, bracket, leg, link, foot]) g.computeVertexNormals();
+
+    const left = { bracket, leg, link, foot };
+    const right = { bracket: mirrorX(bracket), leg: mirrorX(leg), link: mirrorX(link), foot: mirrorX(foot) };
+
+    const mat = (color) => new THREE.MeshStandardMaterial({ color, roughness: 0.65, metalness: 0.05 });
+    this.materials = {
+      body: mat(COLORS.body), yellow: mat(COLORS.yellow), black: mat(COLORS.black),
+      servo: new THREE.MeshStandardMaterial({ color: COLORS.servo, roughness: 0.35, transparent: true, opacity: 0.9 }),
+      horn: mat(COLORS.horn),
+    };
+    const mesh = (geometry, material) => {
+      const o = new THREE.Mesh(geometry, material);
+      o.castShadow = true; o.receiveShadow = true;
+      return o;
+    };
+
+    // Cuerpo
+    const boxMesh = mesh(box, this.materials.body), coverMesh = mesh(cover, this.materials.body);
+    this.asm.add(boxMesh, coverMesh);
+    this.#addEyes();
+    const body = { name: 'el cuerpo', leg: null, ref: boxMesh, meshes: [boxMesh, coverMesh] };
+    this.solids.push(body);
+
+    // Patas. Las traseras son las delanteras del lado contrario giradas 180° en Z.
+    const front = new THREE.Group();
+    const back = new THREE.Group();
+    back.rotation.z = Math.PI;
+    this.asm.add(front, back);
+    const make = (parts, sx, parent, legIndex, legName) => {
+      const H = new THREE.Vector3(sx * 23, -23, 0);   // eje de la cadera
+      const A = new THREE.Vector3(sx * 47, -26, 7);   // eje del servo de la pata
+      const B = new THREE.Vector3(sx * 59, -26, 30);  // pivote de la bieleta
+      const hip = new THREE.Group(); hip.position.copy(H);
+      const bracketMesh = mesh(parts.bracket, this.materials.yellow); bracketMesh.position.copy(H).negate();
+      const legPivot = new THREE.Group(); legPivot.position.copy(A).sub(H);
+      const legMesh = mesh(parts.leg, this.materials.black); legMesh.position.copy(A).negate();
+      const linkPivot = new THREE.Group(); linkPivot.position.copy(B).sub(H);
+      const linkMesh = mesh(parts.link, this.materials.black); linkMesh.position.copy(B).negate();
+      const footGroup = new THREE.Group();
+      const footMesh = mesh(parts.foot, this.materials.yellow); footMesh.position.copy(H).negate();
+      // v: del eje de la pata al pivote del pie (lado del paralelogramo)
+      const v = new THREE.Vector3(sx * 42, 0, -10);
+      // Servo de la cadera: fijo al cuerpo, eje hacia abajo, aletas sobre el fondo de la caja
+      const hipServo = servoModel(this.materials);
+      hipServo.rotation.y = Math.PI; hipServo.position.set(H.x, H.y, 7);
+      // Servo de la pata: fijo al soporte, eje hacia -Y, aletas por fuera del soporte
+      const legServo = servoModel(this.materials);
+      legServo.rotation.x = Math.PI / 2; legServo.position.set(A.x, -36, A.z).sub(H);
+      // Brazo del servo: gira con la pata, por fuera de ella
+      const horn = hornModel(this.materials, v);
+      horn.position.y = -52.3 - A.y;
+      legPivot.add(legMesh, horn); linkPivot.add(linkMesh); footGroup.add(footMesh);
+      hip.add(bracketMesh, legServo, legPivot, linkPivot, footGroup);
+      parent.add(hip, hipServo);
+
+      // Sólidos de la pata y parejas que pueden chocar. En las parejas unidas por
+      // una articulación se ignora el contacto junto al eje, que es el propio encaje.
+      body.meshes.push(...hipServo.children);
+      const solid = (name, ref, extra = []) => {
+        const s = { name: `${name} ${legName}`, leg: legIndex, ref, meshes: [ref, ...extra] };
+        this.solids.push(s);
+        return s;
+      };
+      const sBracket = solid('el soporte', bracketMesh, legServo.children);
+      const sLeg = solid('la pata', legMesh, horn.children);
+      const sLink = solid('la bieleta', linkMesh);
+      const sFoot = solid('el pie', footMesh);
+      const Z = new THREE.Vector3(0, 0, 1), Y = new THREE.Vector3(0, 1, 0);
+      const joint = (point, dir, r) => ({ point: point.clone(), dir, r });
+      this.legPairs[legIndex].push(
+        { a: sBracket, b: body, joint: joint(H, Z, 9) },
+        { a: sLeg, b: body }, { a: sLink, b: body }, { a: sFoot, b: body },
+        { a: sBracket, b: sLeg, joint: joint(A, Y, 9) },
+        { a: sBracket, b: sLink, joint: joint(B, Y, 6.5) },
+        { a: sBracket, b: sFoot },
+        { a: sLeg, b: sLink },
+        { a: sLeg, b: sFoot, joint: joint(A.clone().add(v), Y, 6.5) },
+        { a: sLink, b: sFoot, joint: joint(B.clone().add(v), Y, 6.5) },
+      );
+      return { hip, legPivot, linkPivot, foot: footGroup, v, name: legName, solids: [sBracket, sLeg, sLink, sFoot] };
+    };
+    const FL = make(left, 1, front, 0, 'delantera izquierda'), FR = make(right, -1, front, 1, 'delantera derecha');
+    const BL = make(right, -1, back, 2, 'trasera izquierda'), BR = make(left, 1, back, 3, 'trasera derecha');
+    /** Índice de servo → pata, como en el firmware: [cadera, pata] */
+    this.legs = [FL, FR, BL, BR];
+    // Cada pata contra las demás
+    for (let i = 0; i < 4; i++) for (let j = i + 1; j < 4; j++)
+      for (const a of this.legs[i].solids) for (const b of this.legs[j].solids) this.crossPairs.push({ a, b });
+    // Árbol de volúmenes (BVH) de cada geometría, para cruzar triángulos con rapidez
+    for (const s of this.solids) for (const m of s.meshes) {
+      if (!m.geometry.boundsTree) m.geometry.boundsTree = new MeshBVH(m.geometry);
+      if (!m.geometry.boundingSphere) m.geometry.computeBoundingSphere();
+    }
+    this.setAngles(this.angles);
+  }
+
+  /**
+   * Parejas, de entre las dadas, cuyos sólidos se atraviesan en la postura actual.
+   * Comprobación exacta: compara las mallas reales triángulo a triángulo.
+   */
+  exactHits(pairs) {
+    this.root.updateWorldMatrix(true, true);
+    for (const s of this.solids) for (const m of s.meshes) {
+      (m.userData.sphere ??= new THREE.Sphere()).copy(m.geometry.boundingSphere).applyMatrix4(m.matrixWorld);
+    }
+    return pairs.filter((pair) => this.#pairHits(pair));
+  }
+
+  /**
+   * Choques entre patas distintas en la postura actual (comprobación exacta).
+   * Los de cada pata consigo misma y con el cuerpo los evitan los topes de SERVO_LIMITS.
+   * @returns {{legs:number[], solids:object[], text:string}[]}
+   */
+  collide() {
+    return this.exactHits(this.crossPairs).map(({ a, b }) => (
+      { legs: [a.leg, b.leg], solids: [a, b], text: `${a.name} choca con ${b.name}` }));
+  }
+
+  /**
+   * Mide los topes de la pata delantera izquierda con la comprobación exacta:
+   * para cada ángulo de cadera, los intervalos de ángulo de pata sin choques.
+   * Tarda uno o dos minutos. Devuelve tramos de cadera con los mismos intervalos.
+   */
+  async measureLegLimits(step = 2, onProgress = () => {}) {
+    const saved = this.angles.slice(), n = 180 / step + 1, a = zeroPose(), groups = [];
+    for (let hi = 0; hi < n; hi++) {
+      const runs = [];
+      let start = -1;
+      for (let li = 0; li <= n; li++) {
+        let free = false;
+        if (li < n) {
+          a[HIP_SERVO[0]] = hi * step; a[LEG_SERVO[0]] = li * step;
+          this.setAngles(a);
+          free = this.exactHits(this.legPairs[0]).length === 0;
+        }
+        if (free && start < 0) start = li;
+        if (!free && start >= 0) { runs.push([start * step, (li - 1) * step]); start = -1; }
+      }
+      const key = JSON.stringify(runs), last = groups[groups.length - 1];
+      if (last && last.key === key) last.hipTo = hi * step;
+      else groups.push({ hipFrom: hi * step, hipTo: hi * step, leg: runs, key });
+      onProgress((hi + 1) / n);
+      await new Promise((resolve) => setTimeout(resolve));
+    }
+    this.setAngles(saved);
+    return groups.map(({ key, ...g }) => g);
+  }
+
+  #pairHits({ a, b, joint }) {
+    const toA = _m1, toRef = _m2, line = _line, p = _p, q = _q;
+    for (const ma of a.meshes) for (const mb of b.meshes) {
+      if (!ma.userData.sphere.intersectsSphere(mb.userData.sphere)) continue;
+      toA.copy(ma.matrixWorld).invert().multiply(mb.matrixWorld);
+      if (joint) toRef.copy(a.ref.matrixWorld).invert().multiply(ma.matrixWorld);
+      let hit = false;
+      ma.geometry.boundsTree.bvhcast(mb.geometry.boundsTree, toA, {
+        intersectsTriangles: (t1, t2) => {
+          line.start.set(0, 0, 0); line.end.set(0, 0, 0);
+          if (!t1.intersectsTriangle(t2, line, true)) return false;
+          if (joint) {
+            // Punto de contacto en el sistema del sólido `a`; distancia al eje de la articulación
+            if (line.start.lengthSq() === 0 && line.end.lengthSq() === 0) t1.getMidpoint(p); else line.getCenter(p);
+            p.applyMatrix4(toRef).sub(joint.point);
+            q.copy(joint.dir).multiplyScalar(p.dot(joint.dir));
+            if (p.sub(q).length() < joint.r) return false;
+          }
+          hit = true;
+          return true;
+        },
+      });
+      if (hit) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Mueve los servos hacia `target` tratando las piezas como sólidos:
+   * 1. Cada servo se detiene en su tope mecánico (la pata no atraviesa el cuerpo ni a sí misma).
+   * 2. Si dos patas fueran a chocar entre sí, se detienen justo antes del contacto
+   *    y las demás siguen.
+   * Devuelve lo que ha impedido alcanzar la postura pedida.
+   */
+  moveTo(target) {
+    const from = this.angles.slice();
+    const goal = target.map((v, i) => Math.min(SERVO_LIMITS[i][1], Math.max(SERVO_LIMITS[i][0], v)));
+    const stops = [];
+    this.legs.forEach((leg, i) => {
+      if (goal[HIP_SERVO[i]] !== target[HIP_SERVO[i]] || goal[LEG_SERVO[i]] !== target[LEG_SERVO[i]]) {
+        stops.push({ legs: [], solids: leg.solids, text: `la pata ${leg.name} ha llegado a su tope` });
+      }
+    });
+    this.setAngles(goal);
+    const hits = this.collide();
+    if (!hits.length) return stops;
+    const held = new Set();
+    for (const hit of hits) for (const i of hit.legs) { held.add(HIP_SERVO[i]); held.add(LEG_SERVO[i]); }
+    const mix = (t) => goal.map((v, i) => (held.has(i) ? from[i] + (v - from[i]) * t : v));
+    this.setAngles(mix(0));
+    if (this.collide().length) {
+      // Ni reteniendo esas patas se evita el choque: no se mueve ninguna
+      this.setAngles(from);
+      if (this.collide().length) this.setAngles(goal); // la postura de partida ya chocaba: no bloquear
+      return [...hits, ...stops];
+    }
+    let lo = 0, hi = 1;
+    for (let k = 0; k < 6; k++) {
+      const mid = (lo + hi) / 2;
+      this.setAngles(mix(mid));
+      if (this.collide().length) hi = mid; else lo = mid;
+    }
+    this.setAngles(mix(lo));
+    return [...hits, ...stops];
+  }
+
+  /** Resalta en rojo los sólidos de los choques dados (ninguno: quita el resalte). */
+  flag(hits) {
+    for (const m of this.flagged) m.material = m.userData.baseMaterial;
+    this.flagged = [];
+    for (const hit of hits) for (const s of hit.solids) for (const m of s.meshes) {
+      if (this.flagged.includes(m)) continue;
+      const base = (m.userData.baseMaterial ??= m.material);
+      if (!base.userData.hitMaterial) {
+        base.userData.hitMaterial = base.clone();
+        base.userData.hitMaterial.emissive = new THREE.Color(0xff2a2a);
+        base.userData.hitMaterial.emissiveIntensity = 0.55;
+      }
+      m.material = base.userData.hitMaterial;
+      this.flagged.push(m);
+    }
+  }
+
+  #addEyes() {
+    const white = new THREE.MeshStandardMaterial({ color: 0xf4f4f4, roughness: 0.3 });
+    const black = new THREE.MeshStandardMaterial({ color: 0x050505, roughness: 0.3 });
+    for (const x of [-11, 11]) {
+      const eye = new THREE.Mesh(new THREE.SphereGeometry(6.5, 24, 16), white);
+      eye.scale.y = 0.45; eye.position.set(x, -36.5, 13);
+      const pupil = new THREE.Mesh(new THREE.SphereGeometry(3.2, 16, 12), black);
+      pupil.scale.y = 0.4; pupil.position.set(x, -39, 12);
+      this.asm.add(eye, pupil);
+    }
+  }
+
+  /**
+   * Aplica los 8 ángulos de servo (grados, 0–180) al modelo.
+   * Devuelve la altura (mm) a la que queda el origen del cuerpo sobre el suelo.
+   */
+  setAngles(angles) {
+    this.angles = angles.slice();
+    const hipIdx = HIP_SERVO, legIdx = LEG_SERVO;
+    const yAxis = new THREE.Vector3(0, 1, 0), p = new THREE.Vector3();
+    let lowest = Infinity;
+    this.legs.forEach((leg, i) => {
+      // Cadera: eje de salida hacia abajo (-Z)
+      leg.hip.rotation.z = -(angles[hipIdx[i]] - 90) * DEG;
+      // Pata: eje de salida hacia -Y en el sistema local de la pata
+      const rotY = -(angles[legIdx[i]] - 90) * DEG;
+      leg.legPivot.rotation.y = rotY;
+      leg.linkPivot.rotation.y = rotY;
+      // El pie se traslada sin girar: es el lado opuesto del paralelogramo
+      p.copy(leg.v).applyAxisAngle(yAxis, rotY).sub(leg.v);
+      leg.foot.position.copy(p);
+      lowest = Math.min(lowest, -20 + p.z); // -20: base del pie en la postura neutra
+    });
+    this.groundHeight = -lowest;
+    return this.groundHeight;
+  }
+}
+
+/* ==========================================================================
+ * viewer — escena, cámara y bucle de render
+ * ========================================================================== */
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.xr.enabled = true;
+document.body.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+const BG = new THREE.Color(0x14181d);
+scene.background = BG;
+
+const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.01, 20);
+camera.position.set(0.24, 0.2, 0.34);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 0.03, 0);
+controls.enableDamping = true;
+controls.minDistance = 0.12; controls.maxDistance = 2;
+controls.maxPolarAngle = Math.PI / 2 - 0.02;
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x3a4048, 1.6));
+const sun = new THREE.DirectionalLight(0xffffff, 2.2);
+sun.position.set(0.3, 0.6, 0.35);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -0.3, right: 0.3, top: 0.3, bottom: -0.3, near: 0.05, far: 2 });
+sun.shadow.bias = -0.0005;
+scene.add(sun);
+
+/** Suelo virtual del modo 3D (se oculta en AR). */
+const floor = new THREE.Group();
+const floorMesh = new THREE.Mesh(new THREE.CircleGeometry(0.6, 64), new THREE.MeshStandardMaterial({ color: 0x1f6f63, roughness: 0.9 }));
+floorMesh.rotation.x = -Math.PI / 2; floorMesh.receiveShadow = true;
+const grid = new THREE.GridHelper(1.2, 120, 0xffffff, 0xffffff);
+grid.material.opacity = 0.13; grid.material.transparent = true; grid.position.y = 0.0004;
+floor.add(floorMesh, grid);
+scene.add(floor);
+
+/** Sombra sobre el suelo real en AR. */
+const arShadow = new THREE.Mesh(new THREE.CircleGeometry(0.3, 32), new THREE.ShadowMaterial({ opacity: 0.35 }));
+arShadow.rotation.x = -Math.PI / 2; arShadow.receiveShadow = true; arShadow.visible = false;
+
+const robot = new KameRobot();
+/** Ancla del robot en el mundo: su origen es el punto del suelo bajo el robot. */
+const placement = new THREE.Group();
+placement.add(robot.root, arShadow);
+scene.add(placement);
+
+addEventListener('resize', () => {
+  if (renderer.xr.isPresenting) return;
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+/* ==========================================================================
+ * platform — capacidades del dispositivo y sesión AR mínima
+ * ========================================================================== */
+
+const platform = {
+  isIOS: /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1),
+  arSupported: false,
+  async detect() {
+    if (navigator.xr?.isSessionSupported) {
+      try { this.arSupported = await navigator.xr.isSessionSupported('immersive-ar'); } catch { this.arSupported = false; }
+    }
+    return this;
+  },
+};
+
+const ar = {
+  session: null,
+  hitTestSource: null,
+  placed: false,
+  reticle: (() => {
+    const r = new THREE.Mesh(
+      new THREE.RingGeometry(0.07, 0.085, 48).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: 0xd8f000 }));
+    r.matrixAutoUpdate = false; r.visible = false;
+    scene.add(r);
+    return r;
+  })(),
+
+  async start() {
+    const session = await navigator.xr.requestSession('immersive-ar', {
+      requiredFeatures: ['hit-test'],
+      optionalFeatures: ['dom-overlay', 'local-floor', 'anchors', 'plane-detection', 'hand-tracking'],
+      domOverlay: { root: document.getElementById('overlay') },
+    });
+    this.session = session;
+    this.placed = false;
+    scene.background = null;
+    floor.visible = false;
+    placement.visible = false;
+    arShadow.visible = true;
+    await renderer.xr.setSession(session);
+    const viewerSpace = await session.requestReferenceSpace('viewer');
+    this.hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
+    session.addEventListener('select', () => this.place());
+    session.addEventListener('end', () => this.end());
+    setStatus('Apunta al suelo o a una mesa y toca para colocar el robot.');
+    ui.btnAR.textContent = 'Salir de AR';
+  },
+
+  place() {
+    if (!this.reticle.visible) return;
+    placement.position.setFromMatrixPosition(this.reticle.matrix);
+    // El robot mira hacia el usuario
+    const cam = renderer.xr.getCamera().getWorldPosition(new THREE.Vector3());
+    placement.rotation.set(0, Math.atan2(cam.x - placement.position.x, cam.z - placement.position.z), 0);
+    placement.visible = true;
+    this.placed = true;
+    setStatus('');
+  },
+
+  update(frame) {
+    if (!this.hitTestSource) return;
+    const hits = frame.getHitTestResults(this.hitTestSource);
+    const pose = hits.length ? hits[0].getPose(renderer.xr.getReferenceSpace()) : null;
+    this.reticle.visible = !!pose;
+    if (pose) this.reticle.matrix.fromArray(pose.transform.matrix);
+  },
+
+  end() {
+    this.session = null;
+    this.hitTestSource = null;
+    this.reticle.visible = false;
+    scene.background = BG;
+    floor.visible = true;
+    arShadow.visible = false;
+    placement.visible = true;
+    placement.position.set(0, 0, 0);
+    placement.rotation.set(0, 0, 0);
+    ui.btnAR.textContent = 'Entrar en AR';
+    setStatus('');
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+  },
+};
+
+/* ==========================================================================
+ * ui — panel de la fase 0: servos, posturas y vista previa de marchas
+ * ========================================================================== */
+
+function setStatus(text, isError = false) {
+  const el = document.getElementById('status');
+  el.textContent = text;
+  el.classList.toggle('error', isError);
+}
+
+const ui = {
+  btnAR: document.getElementById('btnAR'),
+  selGait: document.getElementById('selGait'),
+  sliders: [],
+  outputs: [],
+  /** Marcha en vista previa y su instante de inicio. */
+  gait: null,
+  gaitStart: 0,
+
+  init() {
+    const host = document.getElementById('servos');
+    SERVO_NAMES.forEach((name, i) => {
+      const row = document.createElement('div'); row.className = 'servo';
+      const label = document.createElement('label'); label.textContent = `${i} · ${name}`; label.htmlFor = `servo${i}`;
+      const input = Object.assign(document.createElement('input'), { type: 'range', min: 0, max: 180, step: 1, id: `servo${i}` });
+      const out = document.createElement('output');
+      input.addEventListener('input', () => {
+        this.stopGait();
+        const a = robot.angles.slice(); a[i] = +input.value;
+        applyAngles(a);
+      });
+      row.append(label, input, out); host.append(row);
+      this.sliders.push(input); this.outputs.push(out);
+    });
+    for (const name of Object.keys(GAITS)) this.selGait.add(new Option(name, name));
+    this.selGait.addEventListener('change', () => {
+      this.gait = GAITS[this.selGait.value] ?? null;
+      this.gaitStart = performance.now();
+    });
+    document.getElementById('btnStop').addEventListener('click', () => this.stopGait());
+    document.getElementById('btnHome').addEventListener('click', () => { this.stopGait(); applyAngles(homePose()); });
+    document.getElementById('btnZero').addEventListener('click', () => { this.stopGait(); applyAngles(zeroPose()); });
+    this.btnAR.addEventListener('click', async () => {
+      if (ar.session) { ar.session.end(); return; }
+      try { await ar.start(); } catch (e) { setStatus(`No se pudo iniciar la AR: ${e.message}`, true); }
+    });
+    // Los toques en el panel no deben colocar el robot
+    document.getElementById('panel').addEventListener('beforexrselect', (e) => e.preventDefault());
+  },
+
+  stopGait() { this.gait = null; this.selGait.value = ''; },
+
+  showCollision(hits) {
+    const el = document.getElementById('collision');
+    if (!hits.length) { if (el.textContent) el.textContent = ''; return; }
+    const more = hits.length > 1 ? ` (y ${hits.length - 1} más)` : '';
+    const text = `Bloqueado: ${hits[0].text}${more}.`;
+    if (el.textContent !== text) el.textContent = text;
+  },
+
+  sync(angles) {
+    angles.forEach((a, i) => {
+      this.sliders[i].value = a;
+      this.outputs[i].textContent = `${Math.round(a)}°`;
+    });
+  },
+};
+
+/**
+ * Lleva el robot hacia los ángulos pedidos sin que sus piezas se atraviesen,
+ * lo apoya en el suelo y actualiza el panel con la postura realmente alcanzada.
+ */
+function applyAngles(angles) {
+  const clamped = angles.map((a) => Math.min(180, Math.max(0, a)));
+  const hits = robot.moveTo(clamped);
+  robot.flag(hits);
+  robot.root.position.y = robot.groundHeight / 1000;
+  ui.sync(robot.angles);
+  ui.showCollision(hits);
+}
+
+/* ==========================================================================
+ * main
+ * ========================================================================== */
+
+ui.init();
+ui.sync(robot.angles);
+
+renderer.setAnimationLoop((time, frame) => {
+  if (ui.gait && robot.legs.length) {
+    const t = performance.now() - ui.gaitStart;
+    applyAngles(robot.angles.map((_, i) => oscillate(ui.gait, i, t)));
+  }
+  if (frame && ar.session) ar.update(frame);
+  else controls.update();
+  renderer.render(scene, camera);
+});
+
+try {
+  await robot.load();
+  applyAngles(homePose());
+  await platform.detect();
+  if (platform.arSupported) {
+    ui.btnAR.disabled = false;
+    setStatus('');
+  } else if (platform.isIOS) {
+    setStatus('Modo 3D. La AR en iPhone necesita el puente WebXR (pendiente de configurar).');
+  } else {
+    setStatus('Modo 3D. Este navegador no ofrece AR (WebXR immersive-ar).');
+  }
+  window.kame = { robot, applyAngles, GAITS, platform }; // para depurar desde la consola
+} catch (e) {
+  console.error(e);
+  setStatus(`${e.message} Comprueba la conexión y recarga la página.`, true);
+}
+</script>
+</body>
+</html>
