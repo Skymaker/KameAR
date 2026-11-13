@@ -167,6 +167,21 @@ Las piezas del robot se tratan como sólidos: no pueden atravesarse.
 3. Soporta que lo cojan y lo suelten desde 30 cm sin que la simulación se rompa.
 4. Mantiene 72 fps en Quest 3.
 
+### Resultado de la fase 2 (medido en escritorio)
+
+Implementado con Rapier: 9 sólidos (cuerpo y, por pata, soporte y pata con su pie), 8 articulaciones motorizadas, paso de 1/240 s. Los colisionadores son envolventes convexas simplificadas (40 vértices), lo que da unas 20 veces el tiempo real en escritorio.
+
+| Criterio | Resultado |
+|---|---|
+| 1. `walk` recto | Cumplido: 586 mm en 10 ciclos, desvío de 2° |
+| 2. Giros, `hello` y `jump` | Giros y `hello` cumplidos (`turnL` gira 169° en 4 ciclos). **`jump` no:** el robot da una voltereta hacia atrás y queda boca arriba |
+| 3. Caída desde 30 cm | Cumplido: aterriza de pie |
+| 4. 72 fps en Quest 3 | Sin medir (60 fps en escritorio) |
+
+Sobre `jump`: en la postura «sentado» del firmware el robot se apoya en la parte trasera del cuerpo con las patas traseras recogidas bajo él; al impulsarse, esas patas hacen palanca y lo voltean. Ocurre con cualquier fricción, centro de masas o velocidad de servo razonables. Falta contrastarlo con el robot real para saber si es fiel o un defecto del modelo.
+
+Parámetros elegidos sin medir en un robot real: masas (cuerpo 150 g, soporte con servo 20 g, pata 8 g, pie 7 g), fricción de los pies (0,9) y rigidez del servo. El par (1,8 kg·cm) y la velocidad (0,1 s/60°) son los de un SG90.
+
 ### Plan B
 
 Solo si no se cumplen los criterios: cuerpo rígido con velocidad calibrada por marcha y patas únicamente animadas.

@@ -73,11 +73,13 @@
   <div id="status">Cargando el modelo…</div>
   <div id="panel">
     <h1>KameAR</h1>
-    <p class="sub">Fase 1 · marchas del firmware</p>
+    <p class="sub">Fase 2 · físicas</p>
     <div class="row">
       <button id="btnAR" class="primary" disabled>Entrar en AR</button>
       <button id="btnHome">Home</button>
       <button id="btnZero">Zero</button>
+      <button id="btnReset" title="Vuelve a colocar el robot en el origen">Reiniciar</button>
+      <button id="btnDrop" title="Suelta el robot desde 30 cm">Soltar</button>
     </div>
     <div class="row">
       <select id="selGait" aria-label="Marcha">
@@ -121,6 +123,9 @@ const HIP_SERVO = [0, 1, 4, 5];
 const LEG_SERVO = [2, 3, 6, 7];
 
 const DEG = Math.PI / 180;
+
+/** Motor de físicas, cargado de forma externa (incluye su WebAssembly). */
+const RAPIER_URL = 'https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-compat@0.14.0/rapier.es.js';
 
 /**
  * Topes mecánicos de la pata delantera izquierda, en grados de servo: fuera de
@@ -371,6 +376,7 @@ function hornModel(materials, dir) {
 
 const _m1 = new THREE.Matrix4(), _m2 = new THREE.Matrix4(), _line = new THREE.Line3();
 const _p = new THREE.Vector3(), _q = new THREE.Vector3();
+const _qa = new THREE.Quaternion(), _qb = new THREE.Quaternion();
 
 class KameRobot {
   constructor() {
@@ -709,7 +715,9 @@ controls.maxPolarAngle = Math.PI / 2 - 0.02;
 
 scene.add(new THREE.HemisphereLight(0xffffff, 0x3a4048, 1.6));
 const sun = new THREE.DirectionalLight(0xffffff, 2.2);
-sun.position.set(0.3, 0.6, 0.35);
+const SUN_OFFSET = new THREE.Vector3(0.3, 0.6, 0.35);
+sun.position.copy(SUN_OFFSET);
+scene.add(sun.target);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
 Object.assign(sun.shadow.camera, { left: -0.3, right: 0.3, top: 0.3, bottom: -0.3, near: 0.05, far: 2 });
@@ -718,9 +726,9 @@ scene.add(sun);
 
 /** Suelo virtual del modo 3D (se oculta en AR). */
 const floor = new THREE.Group();
-const floorMesh = new THREE.Mesh(new THREE.CircleGeometry(0.6, 64), new THREE.MeshStandardMaterial({ color: 0x1f6f63, roughness: 0.9 }));
+const floorMesh = new THREE.Mesh(new THREE.CircleGeometry(4, 96), new THREE.MeshStandardMaterial({ color: 0x1f6f63, roughness: 0.9 }));
 floorMesh.rotation.x = -Math.PI / 2; floorMesh.receiveShadow = true;
-const grid = new THREE.GridHelper(1.2, 120, 0xffffff, 0xffffff);
+const grid = new THREE.GridHelper(8, 800, 0xffffff, 0xffffff);
 grid.material.opacity = 0.13; grid.material.transparent = true; grid.position.y = 0.0004;
 floor.add(floorMesh, grid);
 scene.add(floor);
@@ -741,6 +749,289 @@ addEventListener('resize', () => {
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
 });
+
+/* ==========================================================================
+ * physics — robot articulado en Rapier
+ *
+ * Nueve sólidos rígidos: el cuerpo y, por pata, el soporte y la pata. Ocho
+ * articulaciones de revolución con motor de posición, una por servo, que
+ * siguen los ángulos de las marchas. El robot se desplaza por la fricción de
+ * sus pies con el suelo.
+ *
+ * - Unidades: longitudes ×10 respecto a metros (1 unidad = 10 cm), masa en kg.
+ *   Rapier es más estable con objetos de tamaño próximo a la unidad.
+ * - Ejes: los de Three.js (Y arriba). Un punto del ensamblaje (mm, Z arriba)
+ *   pasa a (x, z, -y) / 100.
+ * - El pie no gira al moverse la pata (paralelogramo): su colisionador va en
+ *   el sólido de la pata y se contragira en cada paso.
+ * - La pata no choca con su propio cuerpo: de eso se ocupan los topes de las
+ *   articulaciones (SERVO_LIMITS). Sí chocan las patas entre sí y con el entorno.
+ * ========================================================================== */
+
+const PHYS = {
+  scale: 10,               // unidades de física por metro
+  dt: 1 / 240,             // paso fijo (s)
+  iterations: 8,           // iteraciones del resolvedor por paso
+  hullDirections: 40,      // vértices máximos de cada colisionador convexo
+  gravity: 9.81,           // m/s²
+  servoSpeed: 600,         // °/s, velocidad máxima de un SG90 (0,1 s / 60°)
+  stiffness: 120,          // rigidez del servo (par por radián de error, en unidades de física)
+  damping: 2.5,            // amortiguación del servo
+  stallTorque: 17.6,       // par máximo del servo: 1,8 kg·cm = 0,176 N·m (×100 en unidades de física)
+  friction: { foot: 0.9, other: 0.5, ground: 0.9 },
+  mass: { body: 0.150, bracket: 0.020, leg: 0.008, foot: 0.007 }, // kg (soporte incluye su servo)
+  bodyCom: [0, 0, 13],     // centro de masas del cuerpo en el ensamblaje (mm)
+  startHeight: 20.5,       // mm del origen del cuerpo sobre el suelo en la postura de calibración
+};
+
+const GROUP = { env: 0x0001, body: 0x0002, leg: (i) => 0x0004 << i };
+const groups = (member, filter) => ((member << 16) | filter) >>> 0;
+
+/** Punto o vector del ensamblaje (mm, Z arriba) → unidades de física (Y arriba). */
+const toPhys = (x, y, z) => ({ x: x / 100, y: z / 100, z: -y / 100 });
+
+const physics = {
+  ready: false,
+  R: null,
+  world: null,
+  body: null,
+  /** Por pata: sólidos, articulaciones y datos para medir ángulos y recolocar el pie. */
+  legs: [],
+  /** Ángulos pedidos y ángulos de consigna (limitados por la velocidad del servo). */
+  targets: homePose(),
+  command: zeroPose(),
+  /** Tiempo simulado (s) y acumulador de tiempo real pendiente. */
+  time: 0,
+  acc: 0,
+
+  async init() {
+    const mod = await import(RAPIER_URL);
+    const R = mod.default ?? mod;
+    await R.init();
+    this.R = R;
+    this.build();
+    this.ready = true;
+  },
+
+  build() {
+    const R = this.R, S = PHYS.scale;
+    if (this.world) this.world.free();
+    const world = new R.World({ x: 0, y: -PHYS.gravity * S, z: 0 });
+    world.timestep = PHYS.dt;
+    world.numSolverIterations = PHYS.iterations;
+    this.world = world;
+
+    // Suelo: plano Y = 0 del sistema de colocación
+    const ground = world.createRigidBody(R.RigidBodyDesc.fixed().setTranslation(0, -1, 0));
+    world.createCollider(R.ColliderDesc.cuboid(400, 1, 400)
+      .setFriction(PHYS.friction.ground).setCollisionGroups(groups(GROUP.env, 0xffff)), ground);
+
+    const dynamic = (pos) => world.createRigidBody(
+      R.RigidBodyDesc.dynamic().setTranslation(pos.x, pos.y, pos.z).setCanSleep(false));
+    // Direcciones repartidas por la esfera (espiral de Fibonacci)
+    const dirs = [];
+    for (let k = 0; k < PHYS.hullDirections; k++) {
+      const y = 1 - 2 * (k + 0.5) / PHYS.hullDirections, r = Math.sqrt(1 - y * y), a = k * Math.PI * (3 - Math.sqrt(5));
+      dirs.push([r * Math.cos(a), y, r * Math.sin(a)]);
+    }
+    /**
+     * Envolvente convexa simplificada de unas mallas, en el sistema local de un
+     * sólido con origen `o` (mm): solo el vértice más saliente en cada dirección.
+     * Pocas caras hacen la simulación mucho más rápida.
+     */
+    const hull = (meshes, w, o) => {
+      const best = dirs.map(() => ({ d: -Infinity, q: null }));
+      for (const m of meshes) {
+        const a = m.geometry.attributes.position.array;
+        for (let k = 0; k < a.length; k += 3) {
+          const q = toPhys(w * a[k] - o.x, w * a[k + 1] - o.y, a[k + 2] - o.z);
+          for (let n = 0; n < dirs.length; n++) {
+            const d = q.x * dirs[n][0] + q.y * dirs[n][1] + q.z * dirs[n][2];
+            if (d > best[n].d) { best[n].d = d; best[n].q = q; }
+          }
+        }
+      }
+      const pts = [];
+      for (const b of best) pts.push(b.q.x, b.q.y, b.q.z);
+      const desc = R.ColliderDesc.convexHull(new Float32Array(pts));
+      if (!desc) throw new Error('No se pudo crear un colisionador del robot.');
+      return desc;
+    };
+    const origin = { x: 0, y: 0, z: 0 };
+    const y0 = PHYS.startHeight / 100;
+
+    // Cuerpo
+    this.body = dynamic({ x: 0, y: y0, z: 0 });
+    const bodySolid = robot.solids[0];
+    // Masa del cuerpo con su centro de masas explícito e inercia de caja (62 × 72 × 33 mm)
+    const mb = PHYS.mass.body, [bx, by, bz] = [0.62, 0.33, 0.72]; // en unidades de física, ejes Y arriba
+    const com = toPhys(...PHYS.bodyCom);
+    const inertia = { x: mb * (by * by + bz * bz) / 12, y: mb * (bx * bx + bz * bz) / 12, z: mb * (bx * bx + by * by) / 12 };
+    world.createCollider(hull([bodySolid.meshes[0], bodySolid.meshes[1]], 1, origin)
+      .setMassProperties(mb, com, inertia, { x: 0, y: 0, z: 0, w: 1 }).setFriction(PHYS.friction.other)
+      .setCollisionGroups(groups(GROUP.body, GROUP.env)), this.body);
+
+    // Patas
+    this.legs = robot.legs.map((leg, i) => {
+      const sx = (i === 0 || i === 3) ? 1 : -1;   // tipo izquierdo o su imagen especular
+      const w = i < 2 ? 1 : -1;                   // las traseras están giradas 180° en Z
+      const H = { x: w * sx * 23, y: w * -23, z: 0 };
+      const A = { x: w * sx * 47, y: w * -26, z: 7 };
+      const v = { x: w * sx * 42, y: 0, z: -10 };
+      const [sBracket, sLeg, , sFoot] = leg.solids;
+      const others = [0, 1, 2, 3].filter((j) => j !== i).reduce((f, j) => f | GROUP.leg(j), GROUP.env);
+      const g = groups(GROUP.leg(i), others);
+
+      const pH = toPhys(H.x, H.y, H.z), pA = toPhys(A.x, A.y, A.z);
+      const bracket = dynamic({ x: pH.x, y: pH.y + y0, z: pH.z });
+      world.createCollider(hull([sBracket.ref], w, H)
+        .setMass(PHYS.mass.bracket).setFriction(PHYS.friction.other).setCollisionGroups(g), bracket);
+      const legBody = dynamic({ x: pA.x, y: pA.y + y0, z: pA.z });
+      world.createCollider(hull([sLeg.ref], w, A)
+        .setMass(PHYS.mass.leg).setFriction(PHYS.friction.other).setCollisionGroups(g), legBody);
+      const foot = world.createCollider(hull([sFoot.ref], w, A)
+        .setMass(PHYS.mass.foot).setFriction(PHYS.friction.foot).setCollisionGroups(g), legBody);
+
+      // Ejes de salida de los servos: la articulación gira (ángulo - 90)° alrededor de ellos
+      const hipAxis = toPhys(0, 0, -1 * 100), legAxis = toPhys(0, w * -1 * 100, 0);
+      const joint = (data, a, b, servo) => {
+        const j = world.createImpulseJoint(data, a, b, true);
+        j.setContactsEnabled(false);
+        const [lo, hi] = SERVO_LIMITS[servo];
+        j.setLimits((lo - 90) * DEG, (hi - 90) * DEG);
+        j.configureMotorModel(R.MotorModel.ForceBased);
+        return j;
+      };
+      const zero = { x: 0, y: 0, z: 0 };
+      const hipJoint = joint(R.JointData.revolute(pH, zero, hipAxis), this.body, bracket, HIP_SERVO[i]);
+      const dA = toPhys(A.x - H.x, A.y - H.y, A.z - H.z);
+      const legJoint = joint(R.JointData.revolute(dA, zero, legAxis), bracket, legBody, LEG_SERVO[i]);
+
+      return {
+        bracket, legBody, foot, hipJoint, legJoint, hipAxis, legAxis,
+        home: { bracket: pH, leg: pA },
+        footPivot: toPhys(v.x, v.y, v.z),
+      };
+    });
+    this.command = zeroPose();
+    this.time = 0;
+  },
+
+  /** Ángulo (rad) que ha girado `child` respecto a `parent` alrededor de `axis`. */
+  jointAngle(parent, child, axis) {
+    const a = parent.rotation(), b = child.rotation();
+    _qa.set(-a.x, -a.y, -a.z, a.w).multiply(_qb.set(b.x, b.y, b.z, b.w));
+    if (_qa.w < 0) _qa.set(-_qa.x, -_qa.y, -_qa.z, -_qa.w);
+    return 2 * Math.atan2(_qa.x * axis.x + _qa.y * axis.y + _qa.z * axis.z, _qa.w);
+  },
+
+  /** Ángulos de servo reales (grados), medidos en las articulaciones. */
+  measured() {
+    const out = Array(8);
+    this.legs.forEach((leg, i) => {
+      out[HIP_SERVO[i]] = 90 + this.jointAngle(this.body, leg.bracket, leg.hipAxis) / DEG;
+      out[LEG_SERVO[i]] = 90 + this.jointAngle(leg.bracket, leg.legBody, leg.legAxis) / DEG;
+    });
+    return out;
+  },
+
+  /**
+   * Fija los ángulos pedidos a los servos, recortados a sus topes mecánicos.
+   * Devuelve las patas que han llegado a un tope.
+   */
+  setTargets(angles) {
+    const stops = [];
+    this.targets = angles.map((v, i) => Math.min(SERVO_LIMITS[i][1], Math.max(SERVO_LIMITS[i][0], v)));
+    robot.legs.forEach((leg, i) => {
+      if (this.targets[HIP_SERVO[i]] !== angles[HIP_SERVO[i]] || this.targets[LEG_SERVO[i]] !== angles[LEG_SERVO[i]]) {
+        stops.push({ legs: [], solids: leg.solids, text: `la pata ${leg.name} ha llegado a su tope` });
+      }
+    });
+    return stops;
+  },
+
+  /** Un paso de simulación de PHYS.dt segundos. */
+  step() {
+    // Consigna de cada servo: avanza hacia el ángulo pedido a la velocidad máxima
+    // del servo y no se aleja del ángulo real más de lo que da su par máximo
+    // (así el motor nunca empuja con más fuerza que un SG90 de verdad).
+    const maxMove = PHYS.servoSpeed * PHYS.dt, maxError = PHYS.stallTorque / PHYS.stiffness / DEG;
+    const real = this.measured();
+    for (let i = 0; i < 8; i++) {
+      const d = this.targets[i] - this.command[i];
+      const c = this.command[i] + Math.min(maxMove, Math.max(-maxMove, d));
+      this.command[i] = Math.min(real[i] + maxError, Math.max(real[i] - maxError, c));
+    }
+    this.legs.forEach((leg, i) => {
+      leg.hipJoint.configureMotorPosition((this.command[HIP_SERVO[i]] - 90) * DEG, PHYS.stiffness, PHYS.damping);
+      leg.legJoint.configureMotorPosition((this.command[LEG_SERVO[i]] - 90) * DEG, PHYS.stiffness, PHYS.damping);
+      // Paralelogramo: el pie deshace el giro de la pata alrededor de su pivote
+      const phi = (real[LEG_SERVO[i]] - 90) * DEG;
+      _qa.setFromAxisAngle(_p.set(leg.legAxis.x, leg.legAxis.y, leg.legAxis.z), -phi);
+      _q.set(leg.footPivot.x, leg.footPivot.y, leg.footPivot.z).applyQuaternion(_qa);
+      leg.foot.setRotationWrtParent({ x: _qa.x, y: _qa.y, z: _qa.z, w: _qa.w });
+      leg.foot.setTranslationWrtParent({ x: leg.footPivot.x - _q.x, y: leg.footPivot.y - _q.y, z: leg.footPivot.z - _q.z });
+    });
+    this.world.step();
+    this.time += PHYS.dt;
+  },
+
+  /** Avanza la simulación el tiempo real transcurrido y actualiza el modelo visible. */
+  update(dt) {
+    this.acc += Math.min(dt, 0.05);
+    while (this.acc >= PHYS.dt) { this.step(); this.acc -= PHYS.dt; }
+    this.syncVisual();
+  },
+
+  syncVisual() {
+    const t = this.body.translation(), q = this.body.rotation(), S = PHYS.scale;
+    robot.root.position.set(t.x / S, t.y / S, t.z / S);
+    robot.root.quaternion.set(q.x, q.y, q.z, q.w);
+    robot.setAngles(this.measured());
+  },
+
+  /**
+   * Recoloca el robot en la postura de calibración, quieto, con el origen del
+   * cuerpo a `height` metros sobre el punto (x, z) y girado `yaw` radianes.
+   */
+  reset(height = PHYS.startHeight / 1000, x = 0, z = 0, yaw = 0) {
+    const S = PHYS.scale, zero = { x: 0, y: 0, z: 0 };
+    _qa.setFromAxisAngle(_p.set(0, 1, 0), yaw);
+    const rot = { x: _qa.x, y: _qa.y, z: _qa.z, w: _qa.w };
+    const place = (rb, local) => {
+      _q.set(local.x, local.y, local.z).applyQuaternion(_qa);
+      rb.setTranslation({ x: x * S + _q.x, y: height * S + _q.y, z: z * S + _q.z }, true);
+      rb.setRotation(rot, true);
+      rb.setLinvel(zero, true); rb.setAngvel(zero, true);
+    };
+    place(this.body, zero);
+    for (const leg of this.legs) { place(leg.bracket, leg.home.bracket); place(leg.legBody, leg.home.leg); }
+    this.command = zeroPose();
+    this.acc = 0;
+    this.syncVisual();
+  },
+
+  /** Posición (m) y rumbo (rad) del cuerpo, para pruebas y para el bloque de giro. */
+  pose() {
+    const t = this.body.translation(), q = this.body.rotation(), S = PHYS.scale;
+    // Dirección del frente del robot (+Z local) proyectada en el suelo
+    _q.set(0, 0, 1).applyQuaternion(_qa.set(q.x, q.y, q.z, q.w));
+    return { x: t.x / S, y: t.y / S, z: t.z / S, yaw: Math.atan2(_q.x, _q.z), up: _p.set(0, 1, 0).applyQuaternion(_qa).y };
+  },
+
+  /**
+   * Simula `seconds` segundos sin esperar al reloj (para pruebas). `targetsAt(t)`
+   * da los ángulos pedidos en cada instante.
+   */
+  simulate(seconds, targetsAt = null) {
+    const n = Math.round(seconds / PHYS.dt);
+    for (let k = 0; k < n; k++) {
+      if (targetsAt) this.setTargets(targetsAt(k * PHYS.dt * 1000).map((v) => Math.min(180, Math.max(0, v))));
+      this.step();
+    }
+    this.syncVisual();
+  },
+};
 
 /* ==========================================================================
  * platform — capacidades del dispositivo y sesión AR mínima
@@ -798,6 +1089,7 @@ const ar = {
     const cam = renderer.xr.getCamera().getWorldPosition(new THREE.Vector3());
     placement.rotation.set(0, Math.atan2(cam.x - placement.position.x, cam.z - placement.position.z), 0);
     placement.visible = true;
+    if (physics.ready) physics.reset();
     this.placed = true;
     setStatus('');
   },
@@ -820,6 +1112,7 @@ const ar = {
     placement.visible = true;
     placement.position.set(0, 0, 0);
     placement.rotation.set(0, 0, 0);
+    if (physics.ready) physics.reset();
     ui.btnAR.textContent = 'Entrar en AR';
     setStatus('');
     camera.aspect = innerWidth / innerHeight;
@@ -871,6 +1164,8 @@ const ui = {
     });
     document.getElementById('btnStop').addEventListener('click', () => this.stopGait());
     document.getElementById('btnHome').addEventListener('click', () => { this.stopGait(); applyAngles(homePose()); });
+    document.getElementById('btnReset').addEventListener('click', () => { if (physics.ready) physics.reset(); });
+    document.getElementById('btnDrop').addEventListener('click', () => { if (physics.ready) physics.reset(0.3); });
     document.getElementById('btnZero').addEventListener('click', () => { this.stopGait(); applyAngles(zeroPose()); });
     this.btnAR.addEventListener('click', async () => {
       if (ar.session) { ar.session.end(); return; }
@@ -883,7 +1178,7 @@ const ui = {
   /** Empieza un movimiento desde la postura actual. */
   play(def) {
     this.motionDef = def;
-    this.motion = compileMotion(def.make(), robot.angles);
+    this.motion = compileMotion(def.make(), physics.ready ? physics.targets : robot.angles);
     this.motionStart = performance.now();
   },
 
@@ -920,6 +1215,14 @@ const ui = {
  */
 function applyAngles(angles) {
   const clamped = angles.map((a) => Math.min(180, Math.max(0, a)));
+  if (physics.ready) {
+    // Con físicas: los ángulos son consignas para los servos; el movimiento lo resuelve la simulación
+    const stops = physics.setTargets(clamped);
+    robot.flag(stops);
+    ui.sync(physics.targets);
+    ui.showCollision(stops);
+    return;
+  }
   const hits = robot.moveTo(clamped);
   robot.flag(hits);
   robot.root.position.y = robot.groundHeight / 1000;
@@ -1015,6 +1318,46 @@ function runSelfTest() {
     }
     check(`${def.label}: sin choques entre patas`, !stop, stop ?? '');
   }
+  // Físicas: el robot se sostiene, camina recto, gira y aguanta una caída
+  if (physics.ready) {
+    const deg = (rad) => rad / DEG;
+    const settle = () => { physics.reset(); physics.simulate(1, () => home); };
+    const play = (segments) => {
+      const motion = run(segments);
+      physics.simulate(motion.duration / 1000, (t) => motion.sample(t));
+      physics.simulate(0.8, () => motion.end);
+      return physics.pose();
+    };
+    settle();
+    let pose = physics.pose();
+    check('físicas: en reposo queda de pie y quieto', pose.up > 0.99 && Math.hypot(pose.x, pose.z) < 0.01,
+      `inclinación ${deg(Math.acos(pose.up)).toFixed(1)}°`);
+    const real = physics.measured();
+    check('físicas: los servos alcanzan la postura pedida (±3°)', real.every((v, i) => Math.abs(v - home[i]) < 3),
+      real.map((v) => v.toFixed(1)).join(', '));
+    pose = play(kame32.walk(10, 500));
+    check('físicas: 10 ciclos de walk avanzan hacia delante', pose.z > 0.3, `avance ${(pose.z * 1000).toFixed(0)} mm`);
+    check('físicas: 10 ciclos de walk se desvían menos de 15°', Math.abs(deg(pose.yaw)) < 15 && pose.up > 0.99,
+      `desvío ${deg(pose.yaw).toFixed(1)}°`);
+    settle();
+    pose = play(kame32.backward(10, 500));
+    check('físicas: backward retrocede', pose.z < -0.3 && pose.up > 0.99, `avance ${(pose.z * 1000).toFixed(0)} mm`);
+    settle();
+    pose = play(kame32.turnL(4, 600));
+    check('físicas: turnL gira a la izquierda sin volcar', deg(pose.yaw) > 90 && pose.up > 0.99, `giro ${deg(pose.yaw).toFixed(0)}°`);
+    settle();
+    pose = play(kame32.turnR(4, 600));
+    check('físicas: turnR gira a la derecha sin volcar', deg(pose.yaw) < -90 && pose.up > 0.99, `giro ${deg(pose.yaw).toFixed(0)}°`);
+    settle();
+    pose = play(kame32.hello());
+    check('físicas: hello termina de pie', pose.up > 0.95, `inclinación ${deg(Math.acos(pose.up)).toFixed(1)}°`);
+    physics.reset(0.3);
+    physics.simulate(2, () => home);
+    pose = physics.pose();
+    check('físicas: caída desde 30 cm, aterriza de pie y entero', pose.up > 0.99 && physics.measured().every((v, i) => Math.abs(v - home[i]) < 3),
+      `inclinación ${deg(Math.acos(Math.min(1, pose.up))).toFixed(1)}°`);
+    physics.reset();
+  }
   applyAngles(home);
 
   // Informe
@@ -1043,26 +1386,48 @@ function runSelfTest() {
 ui.init();
 ui.sync(robot.angles);
 
+let lastFrame = performance.now();
 renderer.setAnimationLoop((time, frame) => {
+  const now = performance.now(), dt = (now - lastFrame) / 1000;
+  lastFrame = now;
   if (robot.legs.length) ui.tick();
+  if (physics.ready) physics.update(dt);
   if (frame && ar.session) ar.update(frame);
-  else controls.update();
+  else {
+    // La cámara y la luz siguen al robot
+    _p.copy(robot.root.position).setY(0.03).sub(controls.target);
+    if (physics.ready && _p.lengthSq() > 1e-8) {
+      _p.multiplyScalar(Math.min(1, dt * 4));
+      controls.target.add(_p); camera.position.add(_p);
+    }
+    sun.position.copy(robot.root.position).add(SUN_OFFSET);
+    sun.target.position.copy(robot.root.position);
+    controls.update();
+  }
   renderer.render(scene, camera);
 });
 
+let physicsNote = '';
 try {
   await robot.load();
   applyAngles(homePose());
+  try {
+    await physics.init();
+    applyAngles(homePose());
+  } catch (e) {
+    console.error(e);
+    physicsNote = ' Sin físicas: no se pudo cargar el motor.';
+  }
   await platform.detect();
   if (platform.arSupported) {
     ui.btnAR.disabled = false;
     setStatus('');
   } else if (platform.isIOS) {
-    setStatus('Modo 3D. La AR en iPhone necesita el puente WebXR (pendiente de configurar).');
+    setStatus('Modo 3D. La AR en iPhone necesita el puente WebXR (pendiente de configurar).' + physicsNote);
   } else {
-    setStatus('Modo 3D. Este navegador no ofrece AR (WebXR immersive-ar).');
+    setStatus('Modo 3D. Este navegador no ofrece AR (WebXR immersive-ar).' + physicsNote);
   }
-  window.kame = { robot, applyAngles, kame32, MOTIONS, compileMotion, platform }; // para depurar desde la consola
+  window.kame = { robot, physics, PHYS, applyAngles, kame32, MOTIONS, compileMotion, platform }; // para depurar desde la consola
   if (new URLSearchParams(location.search).has('test')) runSelfTest();
 } catch (e) {
   console.error(e);
