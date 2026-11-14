@@ -38,6 +38,8 @@ En las Quest:
 | Acciones | Saludar, saltar, bailar, flexiones |
 | Control | Repetir, cerrar, esperar, si hay obstáculo, velocidad |
 
+El [manual de programación](MANUAL.md) explica cada ficha con ejemplos.
+
 ## Desarrollo
 
 Todo el proyecto es un único `index.html` con su CSS y su JavaScript. No hay compilación ni dependencias que instalar: las bibliotecas ([Three.js](https://threejs.org/), [three-mesh-bvh](https://github.com/gkjohnson/three-mesh-bvh) y [Rapier](https://rapier.rs/)) y las piezas STL del Kame32 se cargan por CDN.
