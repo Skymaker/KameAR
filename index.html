@@ -188,9 +188,11 @@ const DEG = Math.PI / 180;
 /**
  * Puente WebXR para iPhone (Safari no trae WebXR). Con una clave de Variant
  * Launch (launchar.app) la página se abre en su visor y la AR funciona igual
- * que en Android. Sin clave, el iPhone se queda en modo 3D.
+ * que en Android. Sin clave, el iPhone se queda en modo 3D. La clave es
+ * pública (viaja en la dirección del SDK) y solo vale en los dominios
+ * autorizados en el panel de Variant Launch.
  */
-const IOS_BRIDGE = { variantLaunchKey: '' };
+const IOS_BRIDGE = { variantLaunchKey: 'YNlTW53RCk414R2dyCIbavTcT0MprSNS' };
 const RAPIER_URL = 'https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-compat@0.14.0/rapier.es.js';
 
 /**
@@ -1356,21 +1358,37 @@ const platform = {
   caps: { domOverlay: false, planes: false, meshes: false, depth: false, hands: false, anchors: false },
 
   async detect() {
-    if (this.isIOS && !navigator.xr && IOS_BRIDGE.variantLaunchKey) await this.loadIOSBridge();
+    await this.loadIOSBridge();
     if (navigator.xr?.isSessionSupported) {
       try { this.arSupported = await navigator.xr.isSessionSupported('immersive-ar'); } catch { this.arSupported = false; }
     }
     return this;
   },
 
-  /** Carga el SDK de Variant Launch: en Safari redirige a su visor, que sí trae WebXR. */
+  /** Hace falta el puente: iPhone o iPad (Safari no trae WebXR) y hay clave. */
+  get needsIOSBridge() { return this.isIOS && !!IOS_BRIDGE.variantLaunchKey; },
+  /** Estado que comunica el SDK: 'supported', 'launch-required', 'unsupported' o '' si no ha respondido. */
+  bridgeStatus: '',
+  bridge: null,
+
+  /**
+   * Carga el SDK de Variant Launch (una sola vez). En Safari redirige a su
+   * tarjeta de lanzamiento, que abre la página en un visor con WebXR; dentro
+   * del visor, el SDK aporta navigator.xr. Se resuelve cuando el SDK avisa de
+   * que ha terminado, o a los 6 s si no responde.
+   */
   loadIOSBridge() {
-    return new Promise((resolve) => {
+    if (!this.needsIOSBridge) return Promise.resolve();
+    this.bridge ??= new Promise((resolve) => {
+      const done = () => { clearTimeout(timer); resolve(); };
+      const timer = setTimeout(done, 6000);
+      window.addEventListener('vlaunch-initialized', (e) => { this.bridgeStatus = e.detail?.webXRStatus || ''; done(); }, { once: true });
       const script = document.createElement('script');
       script.src = `https://launchar.app/sdk/v1?key=${encodeURIComponent(IOS_BRIDGE.variantLaunchKey)}&redirect=true`;
-      script.onload = resolve; script.onerror = resolve;
+      script.onerror = done;
       document.head.append(script);
     });
+    return this.bridge;
   },
 
   /** Opciones de la sesión AR: todo lo que no sea el hit-test es opcional. */
@@ -2571,8 +2589,8 @@ const help = {
       'El botón «Mover» del panel de fichas permite recolocarlo.',
     ]];
     if (platform.isIOS) return ['En iPhone', [
-      'Safari no ofrece realidad aumentada en la web: el robot se ve en modo 3D.',
-      'Arrastra para girar la vista y pellizca para acercarla.',
+      'Safari no trae realidad aumentada en la web: la página pide abrir el visor de Variant Launch. Acepta su tarjeta («Abrir») para entrar con AR.',
+      'Si no aparece la tarjeta, el robot se ve en modo 3D: arrastra para girar la vista y pellizca para acercarla.',
     ]];
     return ['En este navegador', [
       'No hay realidad aumentada: el robot se ve en modo 3D.',
@@ -3042,6 +3060,7 @@ renderer.setAnimationLoop((time, frame) => {
 
 let physicsNote = '';
 try {
+  platform.loadIOSBridge(); // cuanto antes: en Safari de iPhone redirige al visor con AR
   await robot.load();
   applyAngles(homePose());
   try {
@@ -3056,7 +3075,11 @@ try {
     ui.btnAR.disabled = false;
     setStatus('');
   } else if (platform.isIOS) {
-    setStatus('Modo 3D. La AR en iPhone necesita el puente WebXR (falta su clave en IOS_BRIDGE).' + physicsNote);
+    setStatus((platform.bridgeStatus === 'launch-required'
+      ? 'Modo 3D. Para la AR, acepta la tarjeta de Variant Launch que abre el visor.'
+      : platform.bridgeStatus === 'unsupported'
+        ? 'Modo 3D. Este dispositivo no admite la AR de Variant Launch.'
+        : 'Modo 3D. No se ha podido cargar el puente de AR para iPhone (Variant Launch).') + physicsNote);
   } else {
     setStatus('Modo 3D. Este navegador no ofrece AR (WebXR immersive-ar).' + physicsNote);
   }

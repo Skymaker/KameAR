@@ -207,7 +207,7 @@ Implementado y comprobado en escritorio (autotest y entorno simulado con `?env`)
 - **Suelo:** solo con planos (móviles) se conserva el suelo plano del punto de colocación, porque los planos tienen huecos. Con malla (Quest) el robot se apoya en ella y puede caerse de una mesa; si cae al vacío vuelve al punto de colocación.
 - **Oclusión:** las paredes y planos verticales tapan al robot; el suelo y las mesas no, para que un error de altura no le tape los pies. En el visor la oclusión general es por profundidad.
 - **Visor sin panel:** al colocar el robot echa a andar solo, para poder probar el entorno hasta que llegue el panel de la palma (fase 5).
-- **iOS:** el puente queda preparado (`IOS_BRIDGE.variantLaunchKey` en `index.html`); sin clave de Variant Launch el iPhone sigue en modo 3D.
+- **iOS:** puente de Variant Launch con su clave (`IOS_BRIDGE.variantLaunchKey` en `index.html`). En Safari de iPhone la página redirige a la tarjeta de Variant Launch, que la abre en un visor con WebXR. El SDK solo se carga en iPhone y iPad. El dominio de la página tiene que estar autorizado en el panel de Variant Launch. **Sin probar en un iPhone.**
 - **Pendiente:** anclajes (el robot no se reancla si el seguimiento deriva) y medir el rendimiento en Quest con la malla de la habitación.
 
 Añadido tras las pruebas en Quest: el pellizco de la mano izquierda sale de la AR; colocado en una pared, el robot cae hasta lo que haya debajo; la malla azul y el rótulo flotante son opciones del panel, desactivadas por defecto.
@@ -249,7 +249,7 @@ Implementado y comprobado en escritorio; **falta medirlo y probarlo en Quest 3, 
 - **Otros ahorros:** foveación fija en el visor y un solo dibujo por tornillo con geometrías compartidas.
 - **Ayuda inicial:** se abre sola la primera vez y con el botón «?»; las instrucciones cambian según sea visor, móvil con AR, iPhone o escritorio. En el visor, avisos temporales en el rótulo al entrar y al colocar el robot.
 - **Publicación:** título, descripción, icono y metadatos para compartir; progreso de carga de las piezas; README con enlace, dispositivos, uso y desarrollo.
-- **Pendiente de fases anteriores:** clave del puente de iOS, anclajes, niveles 1 a 3 de las fichas y el corchete de color de «repetir».
+- **Pendiente de fases anteriores:** probar el puente de iOS en un iPhone, anclajes, niveles 1 a 3 de las fichas y el corchete de color de «repetir».
 
 ## 11. Riesgos
 
