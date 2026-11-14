@@ -1007,6 +1007,7 @@ const physics = {
   legs: [],
   /** Suelo plano, sólido fijo del entorno y sus piezas (clave → colisionador). */
   ground: null,
+  groundBody: null,
   envBody: null,
   env: new Map(),
   /** Ángulos pedidos y ángulos de consigna (limitados por la velocidad del servo). */
@@ -1035,6 +1036,7 @@ const physics = {
 
     // Suelo: plano Y = 0 del sistema de colocación
     const ground = world.createRigidBody(R.RigidBodyDesc.fixed().setTranslation(0, -1, 0));
+    this.groundBody = ground;
     this.ground = world.createCollider(R.ColliderDesc.cuboid(400, 1, 400)
       .setFriction(PHYS.friction.ground).setCollisionGroups(groups(GROUP.env, 0xffff)), ground);
     // Entorno real: mallas fijas en el sistema de colocación
@@ -1077,6 +1079,7 @@ const physics = {
 
     // Cuerpo
     this.body = dynamic({ x: 0, y: y0, z: 0 });
+    this.body.enableCcd(true); // en una caída larga no debe atravesar la malla del entorno
     const bodySolid = robot.solids[0];
     // Masa del cuerpo con su centro de masas explícito e inercia de caja (62 × 72 × 33 mm)
     const mb = PHYS.mass.body, [bx, by, bz] = [0.62, 0.33, 0.72]; // en unidades de física, ejes Y arriba
@@ -1169,7 +1172,11 @@ const physics = {
   },
 
   /** Activa o desactiva el suelo plano infinito del punto de colocación. */
-  setGround(on) { if (this.ground.isEnabled() !== on) this.ground.setEnabled(on); },
+  setGround(on, height = 0) {
+    if (this.ground.isEnabled() !== on) this.ground.setEnabled(on);
+    // `height`: altura del suelo respecto al punto de colocación, en unidades de física
+    if (on && Math.abs(this.groundBody.translation().y + 1 - height) > 1e-4) this.groundBody.setTranslation({ x: 0, y: height - 1, z: 0 }, true);
+  },
 
   /** Ángulo (rad) que ha girado `child` respecto a `parent` alrededor de `axis`. */
   jointAngle(parent, child, axis) {
@@ -1368,7 +1375,7 @@ const environment = {
       const mesh = new THREE.Mesh(new THREE.BufferGeometry(), this.occluder);
       mesh.matrixAutoUpdate = false; mesh.renderOrder = -1; mesh.frustumCulled = false;
       this.group.add(mesh);
-      item = { kind, mesh, floorLike, supports: false, dirty: true };
+      item = { kind, mesh, floorLike, below: -Infinity, dirty: true };
       this.items.set(key, item);
     }
     if (positions) {
@@ -1480,20 +1487,41 @@ const environment = {
         _p.set(src[k], src[k + 1], src[k + 2]).applyMatrix4(_m1);
         out[k] = _p.x * S; out[k + 1] = _p.y * S; out[k + 2] = _p.z * S;
       }
-      item.supports = this.coversOrigin(out, idx);
+      item.below = this.heightBelow(out, idx);
       try { physics.setEnv(key, out, idx); } catch (e) { console.warn('Entorno: pieza descartada', e); }
     }
     this.stale = false;
-    // Con malla del entorno, el robot se apoya en ella (y puede caerse de una mesa).
-    // Solo con planos, se conserva el suelo plano: los planos del móvil tienen huecos.
-    let supported = false, meshes = false;
-    for (const item of this.items.values()) { supported ||= item.supports; meshes ||= item.kind !== 'plane'; }
-    physics.setGround(!(meshes && supported));
+    this.updateGround();
     this.info();
   },
 
-  /** ¿Hay un triángulo bajo el punto de colocación, a menos de 10 cm de altura? */
-  coversOrigin(v, idx) {
+  /**
+   * Decide dónde está el suelo plano de la simulación:
+   * - con malla del entorno bajo el robot, no hay suelo plano: se apoya en la
+   *   malla y puede caerse de una mesa;
+   * - colocado en una pared, el suelo plano baja hasta la superficie conocida
+   *   que haya debajo o, si no hay ninguna, hasta el suelo de la habitación;
+   * - en otro caso queda a la altura del punto de colocación (los planos del
+   *   móvil tienen huecos y no bastan para sostener al robot).
+   */
+  updateGround() {
+    if (!physics.ready) return;
+    const S = PHYS.scale;
+    let below = -Infinity, meshes = false;
+    for (const item of this.items.values()) { below = Math.max(below, item.below); meshes ||= item.kind !== 'plane'; }
+    const known = below > -Infinity;
+    let height = 0;
+    if (meshes && known) { physics.setGround(false); height = below; }
+    else {
+      if (ar.onWall) height = known ? below : -placement.position.y * S; // Y = 0 del mundo AR es el suelo
+      physics.setGround(true, height);
+    }
+    arShadow.position.y = height / S + 0.001;
+  },
+
+  /** Altura (unidades de física) de la superficie más alta que hay bajo el punto de colocación, hasta 10 cm por encima. */
+  heightBelow(v, idx) {
+    let best = -Infinity;
     for (let k = 0; k < idx.length; k += 3) {
       const a = idx[k] * 3, b = idx[k + 1] * 3, c = idx[k + 2] * 3;
       const d = (v[b + 2] - v[c + 2]) * (v[a] - v[c]) + (v[c] - v[b]) * (v[a + 2] - v[c + 2]);
@@ -1502,9 +1530,9 @@ const environment = {
       const w = ((v[c + 2] - v[a + 2]) * -v[c] + (v[a] - v[c]) * -v[c + 2]) / d;
       if (u < 0 || w < 0 || u + w > 1) continue;
       const y = u * v[a + 1] + w * v[b + 1] + (1 - u - w) * v[c + 1];
-      if (Math.abs(y) < 1) return true;
+      if (y < 1 && y > best) best = y;
     }
-    return false;
+    return best;
   },
 
   info() {
@@ -1578,6 +1606,8 @@ const ar = {
   /** Instante de inicio de la sesión y si ya se ha pedido configurar el espacio. */
   startedAt: 0,
   roomCaptureAsked: false,
+  /** El robot se ha colocado sobre una superficie no horizontal. */
+  onWall: false,
   hitTestSource: null,
   placed: false,
   reticle: (() => {
@@ -1609,9 +1639,13 @@ const ar = {
     await renderer.xr.setSession(session);
     const viewerSpace = await session.requestReferenceSpace('viewer');
     this.hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
-    session.addEventListener('select', () => this.place());
+    // Mano o mando izquierdo: salir de la AR. El resto (derecho, toque en el móvil): colocar el robot.
+    session.addEventListener('select', (e) => {
+      if (e.inputSource?.handedness === 'left') session.end(); else this.place();
+    });
     session.addEventListener('end', () => this.end());
-    setStatus('Apunta al suelo o a una mesa y toca para colocar el robot.');
+    setStatus(platform.caps.domOverlay ? 'Apunta al suelo o a una mesa y toca para colocar el robot.'
+      : 'Pellizco derecho: colocar el robot. Pellizco izquierdo: salir.');
     ui.btnAR.textContent = 'Salir de AR';
     environment.info();
   },
@@ -1619,6 +1653,11 @@ const ar = {
   place() {
     if (!this.reticle.visible) return;
     placement.position.setFromMatrixPosition(this.reticle.matrix);
+    // La normal de la superficie es el eje Y de la retícula. En una pared, el robot
+    // aparece separado 8 cm de ella y cae hasta lo que haya debajo.
+    const normal = _q.setFromMatrixColumn(this.reticle.matrix, 1);
+    this.onWall = normal.y < 0.8;
+    if (this.onWall) placement.position.addScaledVector(normal.setY(0).normalize(), 0.08);
     // El robot mira hacia el usuario
     const cam = renderer.xr.getCamera().getWorldPosition(new THREE.Vector3());
     placement.rotation.set(0, Math.atan2(cam.x - placement.position.x, cam.z - placement.position.z), 0);
@@ -1653,6 +1692,8 @@ const ar = {
     this.session = null;
     this.hitTestSource = null;
     this.reticle.visible = false;
+    this.onWall = false;
+    arShadow.position.y = 0;
     hud.mesh.visible = false;
     environment.clear();
     scene.background = BG;
@@ -1927,8 +1968,16 @@ function runSelfTest() {
     settle();
     pose = physics.pose();
     check('entorno: sin suelo plano, la malla sostiene al robot', pose.up > 0.99 && pose.y > 0.03, `altura ${(pose.y * 1000).toFixed(0)} mm`);
-    check('entorno: el punto de colocación está cubierto', environment.coversOrigin(new Float32Array([-3, 0, -3, 3, 0, -3, 3, 0, 3, -3, 0, 3]), quadIdx)
-      && !environment.coversOrigin(quad(-3, 3, 0, 1, 2, 2), quadIdx));
+    check('entorno: detecta la superficie que hay bajo el punto de colocación', environment.heightBelow(new Float32Array([-3, -7, -3, 3, -7, -3, 3, -7, 3, -3, -7, 3]), quadIdx) === -7
+      && environment.heightBelow(quad(-3, 3, 0, 1, 2, 2), quadIdx) === -Infinity);
+    // Colocado en alto (pared): el suelo plano baja 1 m y el robot cae hasta él
+    physics.clearEnv();
+    physics.setGround(true, -10);
+    physics.reset();
+    physics.simulate(2.5, () => home);
+    pose = physics.pose();
+    check('entorno: colocado a 1 m de altura, cae hasta el suelo', pose.y < -0.9 && pose.y > -1.0, `altura ${(pose.y * 1000).toFixed(0)} mm`);
+    physics.setGround(true, 0);
     physics.clearEnv();
     check('entorno: al quitarlo vuelve el suelo plano', physics.ground.isEnabled() && physics.env.size === 0);
     physics.reset(0.3);
@@ -1974,7 +2023,7 @@ renderer.setAnimationLoop((time, frame) => {
   if (physics.ready) {
     physics.update(dt);
     // Si se cae al vacío (por el borde de una mesa sin suelo detectado), vuelve a su sitio
-    if (physics.body.translation().y < -1.5 * PHYS.scale) {
+    if (physics.body.translation().y < -4 * PHYS.scale) {
       physics.reset();
       setStatus('El robot se ha caído fuera del entorno detectado; vuelve al punto de colocación.');
     }
