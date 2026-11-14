@@ -1363,7 +1363,8 @@ const environment = {
   /** XRPlane | XRMesh | clave de prueba → pieza. */
   items: new Map(),
   occluder: new THREE.MeshBasicMaterial({ colorWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 2 }),
-  wire: new THREE.MeshBasicMaterial({ color: 0x35e0ff, wireframe: true, transparent: true, opacity: 0.55, side: THREE.DoubleSide }),
+  // Sin prueba de profundidad: la oclusión del visor no debe tapar el alambre
+  wire: new THREE.MeshBasicMaterial({ color: 0x35e0ff, wireframe: true, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthTest: false }),
   debug: false,
   lastScan: 0,
   /** Hay que recalcular todos los colisionadores (ha cambiado la colocación). */
@@ -1376,7 +1377,7 @@ const environment = {
       const mesh = new THREE.Mesh(new THREE.BufferGeometry(), this.occluder);
       mesh.matrixAutoUpdate = false; mesh.renderOrder = -1; mesh.frustumCulled = false;
       this.group.add(mesh);
-      item = { kind, mesh, floorLike, below: -Infinity, dirty: true };
+      item = { kind, mesh, floorLike, below: -Infinity, support: false, dirty: true };
       this.items.set(key, item);
     }
     if (positions) {
@@ -1488,8 +1489,24 @@ const environment = {
         _p.set(src[k], src[k + 1], src[k + 2]).applyMatrix4(_m1);
         out[k] = _p.x * S; out[k + 1] = _p.y * S; out[k + 2] = _p.z * S;
       }
-      item.below = this.heightBelow(out, idx);
-      try { physics.setEnv(key, out, idx); } catch (e) { console.warn('Entorno: pieza descartada', e); }
+      let tris = idx;
+      item.support = false;
+      if (item.kind === 'plane') {
+        // El plano horizontal en el que se ha colocado el robot es su apoyo: se
+        // lleva exactamente a la altura del punto de colocación, la que marcó la retícula.
+        const h = item.floorLike ? this.heightBelow(out, idx) : -Infinity;
+        if (!ar.onWall && Math.abs(h) < 1) {
+          for (let k = 1; k < out.length; k += 3) out[k] -= h;
+          item.support = true;
+          item.below = 0;
+        } else item.below = h;
+      } else {
+        // La malla del visor es tosca: sus triángulos casi horizontales a la altura
+        // del apoyo se descartan, para que no asomen ni hundan al robot respecto al suelo real.
+        tris = this.dropLevel(out, idx);
+        item.below = this.heightBelow(out, tris);
+      }
+      try { physics.setEnv(key, out, tris); } catch (e) { console.warn('Entorno: pieza descartada', e); }
     }
     this.stale = false;
     this.updateGround();
@@ -1498,26 +1515,43 @@ const environment = {
 
   /**
    * Decide dónde está el suelo plano de la simulación:
-   * - con malla del entorno bajo el robot, no hay suelo plano: se apoya en la
-   *   malla y puede caerse de una mesa;
-   * - colocado en una pared, el suelo plano baja hasta la superficie conocida
-   *   que haya debajo o, si no hay ninguna, hasta el suelo de la habitación;
-   * - en otro caso queda a la altura del punto de colocación (los planos del
-   *   móvil tienen huecos y no bastan para sostener al robot).
+   * - colocado sobre un plano horizontal detectado, ese plano es el apoyo y no
+   *   hay suelo plano: el robot puede caerse por su borde (una mesa);
+   * - colocado en una pared, cae hasta la superficie conocida que haya debajo
+   *   o, si no hay ninguna, hasta el suelo de la habitación;
+   * - en otro caso, un suelo plano infinito a la altura del punto de colocación.
    */
   updateGround() {
     if (!physics.ready) return;
     const S = PHYS.scale;
-    let below = -Infinity, meshes = false;
-    for (const item of this.items.values()) { below = Math.max(below, item.below); meshes ||= item.kind !== 'plane'; }
+    let below = -Infinity, meshes = false, support = false;
+    for (const item of this.items.values()) { below = Math.max(below, item.below); meshes ||= item.kind !== 'plane'; support ||= item.support; }
     const known = below > -Infinity;
     let height = 0;
-    if (meshes && known) { physics.setGround(false); height = below; }
-    else {
-      if (ar.onWall) height = known ? below : -placement.position.y * S; // Y = 0 del mundo AR es el suelo
-      physics.setGround(true, height);
-    }
+    if (ar.onWall) {
+      // En una pared: cae hasta lo que haya debajo o, si no se conoce nada, hasta el suelo (Y = 0 del mundo AR)
+      height = known ? below : -placement.position.y * S;
+      physics.setGround(!(meshes && known), height);
+    } else physics.setGround(!support, 0); // con plano de apoyo, sus bordes son reales: puede caerse de una mesa
     arShadow.position.y = height / S + 0.001;
+  },
+
+  /** Triángulos de una malla sin los casi horizontales que quedan a ±6 cm de la altura del apoyo. */
+  dropLevel(v, idx) {
+    if (ar.onWall) return idx;
+    const keep = [];
+    for (let k = 0; k < idx.length; k += 3) {
+      const a = idx[k] * 3, b = idx[k + 1] * 3, c = idx[k + 2] * 3;
+      const near = Math.abs(v[a + 1]) < 0.6 && Math.abs(v[b + 1]) < 0.6 && Math.abs(v[c + 1]) < 0.6;
+      if (near) {
+        const ux = v[b] - v[a], uy = v[b + 1] - v[a + 1], uz = v[b + 2] - v[a + 2];
+        const wx = v[c] - v[a], wy = v[c + 1] - v[a + 1], wz = v[c + 2] - v[a + 2];
+        const nx = uy * wz - uz * wy, ny = uz * wx - ux * wz, nz = ux * wy - uy * wx;
+        if (Math.abs(ny) > 0.7 * Math.hypot(nx, ny, nz)) continue;
+      }
+      keep.push(idx[k], idx[k + 1], idx[k + 2]);
+    }
+    return keep.length === idx.length ? idx : new Uint32Array(keep);
   },
 
   /** Altura (unidades de física) de la superficie más alta que hay bajo el punto de colocación, hasta 10 cm por encima. */
@@ -1656,6 +1690,7 @@ const ar = {
   /** Retira el robot para volver a elegir dónde colocarlo. */
   unplace() {
     program.stop();
+    blockPanel.hidden = false;
     this.placed = false;
     placement.visible = false;
     setStatus('Apunta a una superficie y toca para colocar el robot.');
@@ -1743,9 +1778,9 @@ const program = {
     jump: { glyph: '⤒', group: 'act', name: 'Saltar' },
     dance: { glyph: '💃', group: 'act', name: 'Bailar' },
     pushUp: { glyph: '💪', group: 'act', name: 'Flexiones' },
-    repeat: { glyph: '🔁', group: 'ctl', n: 2, max: 9, open: true, name: 'Repetir' },
+    repeat: { glyph: '🔁', group: 'ctl', n: 2, max: 99, open: true, name: 'Repetir (veces)' },
     end: { glyph: ')', group: 'ctl', name: 'Cerrar' },
-    wait: { glyph: '⏱', group: 'ctl', n: 1, max: 9, name: 'Esperar' },
+    wait: { glyph: '⏱', group: 'ctl', n: 1, max: 99, name: 'Esperar (segundos)' },
     ifObstacle: { glyph: '🚧', group: 'ctl', open: true, name: 'Si hay obstáculo' },
     speed: { glyph: '🐢', group: 'ctl', n: 1, max: 3, name: 'Velocidad' },
   },
@@ -1806,6 +1841,11 @@ const program = {
     this.edited();
   },
   clear() { this.tokens = []; this.selected = -1; this.edited(); },
+  /** Quita la ficha seleccionada o, si no hay ninguna, la última. */
+  backspace() {
+    if (!this.tokens.length) return;
+    this.remove(this.selected >= 0 ? this.selected : this.tokens.length - 1);
+  },
 
   /**
    * Orden en que se ejecutan las fichas (índices), resolviendo repeticiones y
@@ -1952,6 +1992,10 @@ const blockPanel = {
   /** Zonas pulsables del último dibujo: { x, y, w, h, run }. */
   zones: [],
   dirty: true,
+  /** Oculto: se esconde al ejecutar y vuelve al tocar el cuerpo del robot. */
+  hidden: false,
+  /** Zona pulsable del robot (su cuerpo, con algo de margen). */
+  robotHit: null,
   raycaster: new THREE.Raycaster(),
   /** Rayo y punto con los que se apunta desde el visor. */
   pointer: new THREE.Group(),
@@ -1974,6 +2018,9 @@ const blockPanel = {
     this.pointer.add(line, dot); this.pointer.visible = false;
     scene.add(this.pointer);
 
+    this.robotHit = new THREE.Mesh(new THREE.BoxGeometry(0.085, 0.06, 0.095), new THREE.MeshBasicMaterial({ visible: false }));
+    this.robotHit.position.y = 0.015;
+    robot.root.add(this.robotHit);
     program.changed = () => { this.dirty = true; };
     // Modo 3D: un clic o toque sin arrastre
     let down = null;
@@ -1990,12 +2037,26 @@ const blockPanel = {
     });
   },
 
-  /** Pulsa lo que haya bajo el rayo actual. Devuelve si el rayo ha dado en el panel. */
+  /** Lo que hay bajo el rayo actual: el panel (si se ve) o el cuerpo del robot. */
+  target() {
+    if (this.mesh.visible) {
+      const hit = this.raycaster.intersectObject(this.mesh)[0];
+      if (hit) return { panel: true, hit };
+    }
+    if (!robot.legs.length || !placement.visible) return null;
+    const hit = this.raycaster.intersectObject(this.robotHit)[0];
+    return hit ? { panel: false, hit } : null;
+  },
+
+  /**
+   * Pulsa lo que haya bajo el rayo actual: una zona del panel, o el robot (que
+   * muestra u oculta el panel). Devuelve si el rayo ha dado en algo.
+   */
   clickRay() {
-    if (!this.mesh.visible) return false;
-    const hit = this.raycaster.intersectObject(this.mesh)[0];
-    if (!hit) return false;
-    const x = hit.uv.x * this.W, y = (1 - hit.uv.y) * this.H;
+    const t = this.target();
+    if (!t) return false;
+    if (!t.panel) { this.hidden = !this.hidden; this.dirty = true; return true; }
+    const x = t.hit.uv.x * this.W, y = (1 - t.hit.uv.y) * this.H;
     const zone = this.zones.find((z) => x >= z.x && x <= z.x + z.w && y >= z.y && y <= z.y + z.h);
     if (zone) zone.run();
     return true;
@@ -2015,14 +2076,14 @@ const blockPanel = {
     return this.xrRay(event.frame, event.inputSource) && this.clickRay();
   },
 
-  /** En el visor, dibuja el rayo de la mano o el mando derecho y el punto donde toca el panel. */
+  /** En el visor, dibuja el rayo de la mano o el mando derecho y el punto donde toca el panel o el robot. */
   updatePointer(frame) {
     let shown = false;
-    if (this.mesh.visible) {
+    if (ar.placed) {
       for (const source of frame.session.inputSources) {
         if (source.targetRayMode !== 'tracked-pointer' || source.handedness === 'left') continue;
         if (!this.xrRay(frame, source)) continue;
-        const hit = this.raycaster.intersectObject(this.mesh)[0];
+        const hit = this.target()?.hit;
         const ray = this.raycaster.ray, length = hit ? hit.distance : 1.2;
         const [line, dot] = this.pointer.children;
         line.position.copy(ray.origin);
@@ -2039,7 +2100,7 @@ const blockPanel = {
 
   /** Sitúa el panel sobre el robot, de cara a la cámara y con tamaño aparente constante. */
   update() {
-    const visible = robot.legs.length > 0 && (!ar.session || ar.placed);
+    const visible = robot.legs.length > 0 && (!ar.session || ar.placed) && !this.hidden;
     this.mesh.visible = visible;
     if (!visible) return;
     if (this.dirty) { this.draw(); this.dirty = false; }
@@ -2067,16 +2128,17 @@ const blockPanel = {
     // Controles
     const busy = program.running;
     const controls = [
-      [busy ? '▶ Activo' : program.paused ? '▶ Seguir' : '▶ Ejecutar', '#2e9e5b', () => program.run()],
+      [busy ? '▶ Activo' : program.paused ? '▶ Seguir' : '▶ Ejecutar', '#2e9e5b', () => { this.hidden = true; program.run(); }],
       ['⏭ Paso', '#3d4654', () => program.step()],
       ['■ Parar', '#c0463c', () => program.stop()],
-      ['🗑 Borrar', '#3d4654', () => program.clear()],
+      ['⌫ Quitar', '#3d4654', () => program.backspace()],
+      ['🗑 Todo', '#3d4654', () => program.clear()],
       ar.session ? ['📍 Mover', '#3d4654', () => ar.unplace()] : ['⟲ Inicio', '#3d4654', () => { program.stop(); if (physics.ready) physics.reset(); }],
     ];
     controls.forEach(([text, color, run], k) => {
-      const x = 20 + k * 198, w = 188;
+      const x = 20 + k * 166, w = 158;
       box(x, 16, w, 92, color);
-      label(text, x + w / 2, 62, 32, '#ffffff', true);
+      label(text, x + w / 2, 62, 27, '#ffffff', true);
       zone(x, 16, w, 92, run);
     });
 
@@ -2089,8 +2151,9 @@ const blockPanel = {
       const glyph = tok.type === 'speed' ? ['🐢', '▶', '🐇'][tok.n - 1] : def.glyph + (def.open ? '(' : '');
       label(glyph, x + size / 2, y + size / 2 - (def.max && tok.type !== 'speed' ? 6 : 0), def.open ? size * 0.42 : size * 0.52, dark ? '#1b1b1d' : '#ffffff', true);
       if (def.max && tok.type !== 'speed') {
-        box(x + size - 34, y + size - 34, 30, 30, 'rgba(0,0,0,0.55)', 8);
-        label(String(tok.n), x + size - 19, y + size - 18, 24, '#ffffff', true);
+        const bw = tok.n > 9 ? 44 : 30;
+        box(x + size - bw - 4, y + size - 34, bw, 30, 'rgba(0,0,0,0.55)', 8);
+        label(String(tok.n), x + size - bw / 2 - 4, y + size - 18, 24, '#ffffff', true);
       }
       if (outline) { c.strokeStyle = outline; c.lineWidth = 6; c.beginPath(); c.roundRect(x - 2, y - 2, size + 4, size + 4, 16); c.stroke(); }
     };
@@ -2106,12 +2169,17 @@ const blockPanel = {
     if (sel) {
       const def = T[sel.type];
       const buttons = [];
-      if (def.max) buttons.push(['−', () => program.bump(program.selected, -1)], [String(sel.n), null], ['+', () => program.bump(program.selected, 1)]);
+      if (def.max) {
+        const big = def.max > 9; // números grandes: también de diez en diez
+        if (big) buttons.push(['−10', () => program.bump(program.selected, -10)]);
+        buttons.push(['−', () => program.bump(program.selected, -1)], [String(sel.n), null], ['+', () => program.bump(program.selected, 1)]);
+        if (big) buttons.push(['+10', () => program.bump(program.selected, 10)]);
+      }
       buttons.push(['◀', () => program.move(program.selected, -1)], ['▶', () => program.move(program.selected, 1)], ['✕ Quitar', () => program.remove(program.selected)]);
-      label(def.name, 32, 386, 30, '#f1f4f8', true, 'left');
+      label(def.name, 32, 386, def.max > 9 ? 22 : 30, '#f1f4f8', true, 'left');
       let x = W - 20;
       for (const [text, run] of buttons.slice().reverse()) {
-        const w = text.length > 2 ? 190 : 84;
+        const w = text.length > 3 ? 190 : text.length === 3 ? 112 : 84;
         x -= w;
         if (run) { box(x, 348, w - 8, 76, '#3d4654'); zone(x, 348, w - 8, 76, run); }
         label(text, x + (w - 8) / 2, 386, 36, '#ffffff', true);
