@@ -81,7 +81,7 @@
     <div class="head">
       <div class="title">
         <h1>KameAR</h1>
-        <p class="sub">Fase 3 · AR y entorno</p>
+        <p class="sub">Fase 4 · programación por bloques</p>
       </div>
       <button id="btnPanel" aria-expanded="true" aria-label="Ocultar el panel" title="Ocultar el panel">▾</button>
     </div>
@@ -105,6 +105,7 @@
     </details>
     <div class="row">
       <label class="check"><input type="checkbox" id="chkEnv"> Ver entorno detectado</label>
+      <label class="check"><input type="checkbox" id="chkHud"> Rótulo flotante (visor)</label>
     </div>
     <p id="envInfo"></p>
     <p id="collision" role="status"></p>
@@ -890,9 +891,9 @@ const BG = new THREE.Color(0x14181d);
 scene.background = BG;
 
 const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.01, 20);
-camera.position.set(0.24, 0.2, 0.34);
+camera.position.set(0.22, 0.3, 0.6);
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, 0.03, 0);
+controls.target.set(0, 0.15, 0); // entre el robot y su panel de fichas
 controls.enableDamping = true;
 controls.minDistance = 0.06; controls.maxDistance = 2;
 controls.maxPolarAngle = Math.PI / 2 - 0.02;
@@ -1567,6 +1568,8 @@ scene.add(environment.group);
  * mensaje de estado y el recuento del entorno delante del usuario.
  */
 const hud = {
+  /** Se activa con la casilla «Rótulo flotante» del panel. */
+  enabled: false,
   canvas: Object.assign(document.createElement('canvas'), { width: 1024, height: 192 }),
   text: null,
   mesh: null,
@@ -1626,11 +1629,6 @@ const ar = {
     this.startedAt = performance.now();
     this.roomCaptureAsked = false;
     platform.readCaps(session);
-    // Sin panel sobre la imagen (visor) no hay casilla que marcar: el entorno se dibuja siempre
-    if (!platform.caps.domOverlay) {
-      environment.setDebug(true);
-      document.getElementById('chkEnv').checked = true;
-    }
     environment.clear();
     scene.background = null;
     floor.visible = false;
@@ -1641,13 +1639,26 @@ const ar = {
     this.hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
     // Mano o mando izquierdo: salir de la AR. El resto (derecho, toque en el móvil): colocar el robot.
     session.addEventListener('select', (e) => {
-      if (e.inputSource?.handedness === 'left') session.end(); else this.place();
+      if (e.inputSource?.handedness === 'left') { session.end(); return; }
+      // Con el robot ya colocado, los toques solo actúan sobre el panel de bloques
+      if (this.placed) blockPanel.clickFromXR(e); else this.place();
     });
     session.addEventListener('end', () => this.end());
     setStatus(platform.caps.domOverlay ? 'Apunta al suelo o a una mesa y toca para colocar el robot.'
       : 'Pellizco derecho: colocar el robot. Pellizco izquierdo: salir.');
     ui.btnAR.textContent = 'Salir de AR';
+    // En el móvil, el panel de herramientas se recoge para dejar sitio al panel de fichas
+    const tools = document.getElementById('panel');
+    if (platform.caps.domOverlay && !tools.classList.contains('hidden')) document.getElementById('btnPanel').click();
     environment.info();
+  },
+
+  /** Retira el robot para volver a elegir dónde colocarlo. */
+  unplace() {
+    program.stop();
+    this.placed = false;
+    placement.visible = false;
+    setStatus('Apunta a una superficie y toca para colocar el robot.');
   },
 
   place() {
@@ -1668,8 +1679,6 @@ const ar = {
     environment.stale = true;
     environment.sync();
     setStatus('');
-    // Sin panel sobre la imagen (visor): el robot echa a andar para poder probar el entorno
-    if (!platform.caps.domOverlay) ui.play(MOTIONS[0]);
   },
 
   update(frame) {
@@ -1685,13 +1694,16 @@ const ar = {
       this.roomCaptureAsked = true;
       this.session.initiateRoomCapture().catch((e) => console.warn('Configuración del espacio:', e));
     }
-    if (!platform.caps.domOverlay) hud.update();
+    if (!platform.caps.domOverlay && hud.enabled) hud.update(); else hud.mesh.visible = false;
+    blockPanel.updatePointer(frame);
   },
 
   end() {
     this.session = null;
     this.hitTestSource = null;
     this.reticle.visible = false;
+    blockPanel.pointer.visible = false;
+    program.stop();
     this.onWall = false;
     arShadow.position.y = 0;
     hud.mesh.visible = false;
@@ -1710,6 +1722,421 @@ const ar = {
     renderer.setSize(innerWidth, innerHeight);
   },
 };
+
+/* ==========================================================================
+ * program — el programa de fichas y su intérprete
+ *
+ * El programa es una tira de fichas que se lee de izquierda a derecha. Las
+ * fichas «repetir» y «si hay obstáculo» abren un paréntesis que cierra la
+ * ficha «)»; si falta, se cierra solo al final. Cualquier tira es válida.
+ * ========================================================================== */
+
+const program = {
+  MAX: 18,
+  /** group: mover, acción o control. n: número inicial; max: su tope. open: abre paréntesis. */
+  TYPES: {
+    walk: { glyph: '↑', group: 'move', n: 1, max: 9, name: 'Avanzar' },
+    backward: { glyph: '↓', group: 'move', n: 1, max: 9, name: 'Retroceder' },
+    turnL: { glyph: '↺', group: 'move', n: 1, max: 4, name: 'Girar a la izquierda' },
+    turnR: { glyph: '↻', group: 'move', n: 1, max: 4, name: 'Girar a la derecha' },
+    hello: { glyph: '👋', group: 'act', name: 'Saludar' },
+    jump: { glyph: '⤒', group: 'act', name: 'Saltar' },
+    dance: { glyph: '💃', group: 'act', name: 'Bailar' },
+    pushUp: { glyph: '💪', group: 'act', name: 'Flexiones' },
+    repeat: { glyph: '🔁', group: 'ctl', n: 2, max: 9, open: true, name: 'Repetir' },
+    end: { glyph: ')', group: 'ctl', name: 'Cerrar' },
+    wait: { glyph: '⏱', group: 'ctl', n: 1, max: 9, name: 'Esperar' },
+    ifObstacle: { glyph: '🚧', group: 'ctl', open: true, name: 'Si hay obstáculo' },
+    speed: { glyph: '🐢', group: 'ctl', n: 1, max: 3, name: 'Velocidad' },
+  },
+  /** @type {{type:string, n:number}[]} */
+  tokens: [],
+  selected: -1,
+  /** Ficha en ejecución, y estado del intérprete. */
+  active: -1,
+  running: false,
+  paused: false,
+  single: false,
+  iterator: null,
+  motion: null,
+  motionStart: 0,
+  turn: null,
+  /** Factor de periodo de las marchas: 1,5 lento, 1 normal, 0,7 rápido. */
+  speed: 1,
+  /** Aviso de cambios, para redibujar el panel. */
+  changed: () => {},
+
+  load() {
+    try {
+      const saved = JSON.parse(localStorage.getItem('kamear.programa') ?? 'null');
+      if (Array.isArray(saved)) {
+        this.tokens = saved.filter((t) => this.TYPES[t?.type]).slice(0, this.MAX)
+          .map((t) => ({ type: t.type, n: Math.min(this.TYPES[t.type].max ?? 1, Math.max(1, t.n | 0)) }));
+        return;
+      }
+    } catch { /* sin almacenamiento o dato roto: programa de ejemplo */ }
+    this.tokens = [{ type: 'walk', n: 2 }, { type: 'turnR', n: 1 }, { type: 'repeat', n: 2 }, { type: 'hello', n: 1 }, { type: 'end', n: 1 }];
+  },
+
+  save() {
+    try { localStorage.setItem('kamear.programa', JSON.stringify(this.tokens)); } catch { /* sin almacenamiento */ }
+  },
+
+  /** Tras editar: detiene la ejecución en curso, guarda y avisa. */
+  edited() { this.halt(); this.save(); this.changed(); },
+
+  add(type) {
+    if (this.tokens.length >= this.MAX) return;
+    this.tokens.push({ type, n: this.TYPES[type].n ?? 1 });
+    this.selected = -1;
+    this.edited();
+  },
+  remove(i) { this.tokens.splice(i, 1); this.selected = -1; this.edited(); },
+  move(i, d) {
+    const j = i + d;
+    if (j < 0 || j >= this.tokens.length) return;
+    [this.tokens[i], this.tokens[j]] = [this.tokens[j], this.tokens[i]];
+    this.selected = j;
+    this.edited();
+  },
+  bump(i, d) {
+    const tok = this.tokens[i], max = this.TYPES[tok.type].max;
+    if (!max) return;
+    tok.n = Math.min(max, Math.max(1, tok.n + d));
+    this.edited();
+  },
+  clear() { this.tokens = []; this.selected = -1; this.edited(); },
+
+  /**
+   * Orden en que se ejecutan las fichas (índices), resolviendo repeticiones y
+   * condiciones. `obstacle()` se consulta en el momento de llegar a la ficha.
+   */
+  *order(tokens, obstacle) {
+    const TYPES = this.TYPES;
+    const close = (i) => {
+      let depth = 0;
+      for (let k = i + 1; k < tokens.length; k++) {
+        if (TYPES[tokens[k].type].open) depth++;
+        else if (tokens[k].type === 'end') { if (depth === 0) return k; depth--; }
+      }
+      return tokens.length;
+    };
+    function* run(from, to) {
+      for (let i = from; i < to; i++) {
+        const tok = tokens[i];
+        if (tok.type === 'end') continue;
+        if (!TYPES[tok.type].open) { yield i; continue; }
+        const end = close(i);
+        if (tok.type === 'repeat') { for (let k = 0; k < tok.n; k++) yield* run(i + 1, end); }
+        else if (obstacle()) yield* run(i + 1, end);
+        i = end;
+      }
+    }
+    yield* run(0, tokens.length);
+  },
+
+  /** ¿Hay algo del entorno a menos de 25 cm por delante del robot? */
+  obstacleAhead() {
+    if (!physics.ready) return false;
+    const t = physics.body.translation(), q = physics.body.rotation();
+    _q.set(0, 0, 1).applyQuaternion(_qa.set(q.x, q.y, q.z, q.w)).setY(0).normalize();
+    const ray = new physics.R.Ray({ x: t.x, y: t.y, z: t.z }, { x: _q.x, y: 0, z: _q.z });
+    const hit = physics.world.castRay(ray, 0.25 * PHYS.scale, true, undefined, groups(0xffff, GROUP.env), physics.ground);
+    return !!hit;
+  },
+
+  /** Ejecutar: empieza el programa, o lo continúa si estaba en pausa tras un paso. */
+  run() {
+    if (!this.tokens.length) return;
+    ui.stopGait();
+    if (!this.iterator) this.begin();
+    this.single = false; this.running = true; this.paused = false;
+    this.changed();
+  },
+
+  /** Paso: ejecuta una sola ficha y se detiene. */
+  step() {
+    if (!this.tokens.length || this.running) return;
+    ui.stopGait();
+    if (!this.iterator) this.begin();
+    this.single = true; this.running = true; this.paused = false;
+    this.changed();
+  },
+
+  begin() {
+    this.iterator = this.order(this.tokens, () => this.obstacleAhead());
+    this.speed = 1;
+    this.motion = null;
+  },
+
+  /** Detiene el intérprete sin mover el robot. */
+  halt() {
+    this.running = false; this.paused = false; this.single = false;
+    this.iterator = null; this.motion = null; this.turn = null; this.active = -1;
+  },
+
+  /** Parar: detiene el programa y devuelve el robot a la postura de reposo. */
+  stop() {
+    const was = this.running || this.paused;
+    this.halt();
+    if (was && robot.legs.length) applyAngles(homePose());
+    this.changed();
+  },
+
+  /** Prepara el movimiento de una ficha. */
+  start(i, now) {
+    const tok = this.tokens[i], f = this.speed;
+    const from = physics.ready ? physics.targets : robot.angles;
+    const settle = [seg.ramp(150, homePose()), seg.hold(120)];
+    const motion = (segments) => compileMotion([...segments, ...settle], from);
+    this.active = i; this.turn = null;
+    switch (tok.type) {
+      case 'walk': this.motion = motion(kame32.walk(2 * tok.n, 500 * f)); break;
+      case 'backward': this.motion = motion(kame32.backward(2 * tok.n, 500 * f)); break;
+      case 'turnL': case 'turnR':
+        if (physics.ready) {
+          // Giro de 90° exacto: la marcha sigue hasta que el rumbo medido ha cambiado lo pedido
+          this.motion = compileMotion(kame32[tok.type](12 * tok.n, 600 * f), from);
+          this.turn = { goal: (90 * tok.n - 5) * DEG, sum: 0, last: physics.pose().yaw };
+        } else this.motion = motion(kame32[tok.type](2 * tok.n, 600 * f));
+        break;
+      case 'hello': this.motion = motion(kame32.hello()); break;
+      case 'jump': this.motion = motion(kame32.jump()); break;
+      case 'dance': this.motion = motion(kame32.dance(2, 1000 * f)); break;
+      case 'pushUp': this.motion = motion(kame32.pushUp(2, 1000 * f)); break;
+      case 'wait': this.motion = compileMotion([seg.hold(1000 * tok.n)], from); break;
+      case 'speed': this.speed = [1.5, 1, 0.7][tok.n - 1]; this.motion = compileMotion([seg.hold(1)], from); break;
+    }
+    this.motionStart = now;
+  },
+
+  /** Avanza el programa; se llama en cada fotograma (o con un reloj propio en las pruebas). */
+  tick(now = performance.now()) {
+    if (!this.running) return;
+    if (!this.motion) {
+      const next = this.iterator.next();
+      if (next.done) { this.halt(); this.changed(); return; }
+      this.start(next.value, now);
+      this.changed();
+    }
+    const t = now - this.motionStart;
+    if (this.turn) {
+      const yaw = physics.pose().yaw, d = yaw - this.turn.last;
+      this.turn.sum += Math.atan2(Math.sin(d), Math.cos(d));
+      this.turn.last = yaw;
+      if (Math.abs(this.turn.sum) >= this.turn.goal || t >= this.motion.duration) {
+        this.turn = null;
+        this.motion = compileMotion([seg.ramp(150, homePose()), seg.hold(120)], physics.targets);
+        this.motionStart = now;
+        return;
+      }
+    }
+    if (t < this.motion.duration) { applyAngles(this.motion.sample(t)); return; }
+    applyAngles(this.motion.end);
+    this.motion = null;
+    if (this.single) { this.running = false; this.paused = true; this.changed(); }
+  },
+};
+
+/* ==========================================================================
+ * blockPanel — panel de fichas flotando sobre el robot
+ *
+ * Se dibuja en un lienzo y se muestra como un plano en la escena, siempre de
+ * cara a la cámara. Se toca con el ratón o el dedo (modo 3D), con un toque en
+ * la pantalla (AR en el móvil) o apuntando y pellizcando (visor).
+ * ========================================================================== */
+
+const blockPanel = {
+  W: 1024, H: 800,
+  canvas: null, ctx: null, mesh: null,
+  /** Zonas pulsables del último dibujo: { x, y, w, h, run }. */
+  zones: [],
+  dirty: true,
+  raycaster: new THREE.Raycaster(),
+  /** Rayo y punto con los que se apunta desde el visor. */
+  pointer: new THREE.Group(),
+  COLORS: { move: '#2f7fe6', act: '#f08a24', ctl: '#e9cc1c' },
+
+  init() {
+    this.canvas = Object.assign(document.createElement('canvas'), { width: this.W, height: this.H });
+    this.ctx = this.canvas.getContext('2d');
+    const map = new THREE.CanvasTexture(this.canvas);
+    map.colorSpace = THREE.SRGBColorSpace; map.anisotropy = 8;
+    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, this.H / this.W),
+      new THREE.MeshBasicMaterial({ map, transparent: true, side: THREE.DoubleSide, toneMapped: false }));
+    this.mesh.visible = false; this.mesh.renderOrder = 5;
+    scene.add(this.mesh);
+
+    const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 0, -1)]),
+      new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6 }));
+    const dot = new THREE.Mesh(new THREE.SphereGeometry(0.006, 12, 8), new THREE.MeshBasicMaterial({ color: 0xdff214, depthTest: false }));
+    dot.renderOrder = 6;
+    this.pointer.add(line, dot); this.pointer.visible = false;
+    scene.add(this.pointer);
+
+    program.changed = () => { this.dirty = true; };
+    // Modo 3D: un clic o toque sin arrastre
+    let down = null;
+    const el = renderer.domElement;
+    el.addEventListener('pointerdown', (e) => { down = { x: e.clientX, y: e.clientY }; });
+    el.addEventListener('pointerup', (e) => {
+      if (!down || renderer.xr.isPresenting) return;
+      const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
+      down = null;
+      if (moved > 6) return;
+      const r = el.getBoundingClientRect();
+      this.raycaster.setFromCamera(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), camera);
+      this.clickRay();
+    });
+  },
+
+  /** Pulsa lo que haya bajo el rayo actual. Devuelve si el rayo ha dado en el panel. */
+  clickRay() {
+    if (!this.mesh.visible) return false;
+    const hit = this.raycaster.intersectObject(this.mesh)[0];
+    if (!hit) return false;
+    const x = hit.uv.x * this.W, y = (1 - hit.uv.y) * this.H;
+    const zone = this.zones.find((z) => x >= z.x && x <= z.x + z.w && y >= z.y && y <= z.y + z.h);
+    if (zone) zone.run();
+    return true;
+  },
+
+  /** Rayo de una fuente de entrada de WebXR (toque en pantalla, mano o mando). */
+  xrRay(frame, source) {
+    const pose = frame.getPose(source.targetRaySpace, renderer.xr.getReferenceSpace());
+    if (!pose) return false;
+    const m = _m1.fromArray(pose.transform.matrix);
+    this.raycaster.ray.origin.setFromMatrixPosition(m);
+    this.raycaster.ray.direction.set(0, 0, -1).transformDirection(m);
+    return true;
+  },
+
+  clickFromXR(event) {
+    return this.xrRay(event.frame, event.inputSource) && this.clickRay();
+  },
+
+  /** En el visor, dibuja el rayo de la mano o el mando derecho y el punto donde toca el panel. */
+  updatePointer(frame) {
+    let shown = false;
+    if (this.mesh.visible) {
+      for (const source of frame.session.inputSources) {
+        if (source.targetRayMode !== 'tracked-pointer' || source.handedness === 'left') continue;
+        if (!this.xrRay(frame, source)) continue;
+        const hit = this.raycaster.intersectObject(this.mesh)[0];
+        const ray = this.raycaster.ray, length = hit ? hit.distance : 1.2;
+        const [line, dot] = this.pointer.children;
+        line.position.copy(ray.origin);
+        line.quaternion.setFromUnitVectors(_q.set(0, 0, -1), ray.direction);
+        line.scale.set(1, 1, length);
+        dot.visible = !!hit;
+        if (hit) dot.position.copy(hit.point);
+        shown = true;
+        break;
+      }
+    }
+    this.pointer.visible = shown;
+  },
+
+  /** Sitúa el panel sobre el robot, de cara a la cámara y con tamaño aparente constante. */
+  update() {
+    const visible = robot.legs.length > 0 && (!ar.session || ar.placed);
+    this.mesh.visible = visible;
+    if (!visible) return;
+    if (this.dirty) { this.draw(); this.dirty = false; }
+    const cam = ar.session ? renderer.xr.getCamera() : camera;
+    cam.getWorldPosition(_p);
+    robot.root.getWorldPosition(_q);
+    const width = Math.min(0.9, Math.max(0.26, 0.36 * _p.distanceTo(_q)));
+    this.mesh.scale.setScalar(width);
+    this.mesh.position.copy(_q); this.mesh.position.y += 0.07 + width * this.H / this.W / 2;
+    this.mesh.lookAt(_p);
+  },
+
+  draw() {
+    const c = this.ctx, W = this.W, H = this.H, T = program.TYPES;
+    const font = (px, bold = false) => `${bold ? 'bold ' : ''}${px}px system-ui, "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
+    this.zones = [];
+    const zone = (x, y, w, h, run) => this.zones.push({ x, y, w, h, run });
+    const box = (x, y, w, h, fill, r = 16) => { c.fillStyle = fill; c.beginPath(); c.roundRect(x, y, w, h, r); c.fill(); };
+    const label = (text, x, y, px, color = '#f1f4f8', bold = false, align = 'center') => {
+      c.fillStyle = color; c.font = font(px, bold); c.textAlign = align; c.textBaseline = 'middle'; c.fillText(text, x, y);
+    };
+    c.clearRect(0, 0, W, H);
+    box(0, 0, W, H, 'rgba(18,22,28,0.9)', 28);
+
+    // Controles
+    const busy = program.running;
+    const controls = [
+      [busy ? '▶ Activo' : program.paused ? '▶ Seguir' : '▶ Ejecutar', '#2e9e5b', () => program.run()],
+      ['⏭ Paso', '#3d4654', () => program.step()],
+      ['■ Parar', '#c0463c', () => program.stop()],
+      ['🗑 Borrar', '#3d4654', () => program.clear()],
+      ar.session ? ['📍 Mover', '#3d4654', () => ar.unplace()] : ['⟲ Inicio', '#3d4654', () => { program.stop(); if (physics.ready) physics.reset(); }],
+    ];
+    controls.forEach(([text, color, run], k) => {
+      const x = 20 + k * 198, w = 188;
+      box(x, 16, w, 92, color);
+      label(text, x + w / 2, 62, 32, '#ffffff', true);
+      zone(x, 16, w, 92, run);
+    });
+
+    // Programa
+    box(20, 124, W - 40, 212, 'rgba(255,255,255,0.06)');
+    const tile = (tok, x, y, size, outline) => {
+      const def = T[tok.type];
+      box(x, y, size, size, this.COLORS[def.group], 14);
+      const dark = def.group === 'ctl';
+      const glyph = tok.type === 'speed' ? ['🐢', '▶', '🐇'][tok.n - 1] : def.glyph + (def.open ? '(' : '');
+      label(glyph, x + size / 2, y + size / 2 - (def.max && tok.type !== 'speed' ? 6 : 0), def.open ? size * 0.42 : size * 0.52, dark ? '#1b1b1d' : '#ffffff', true);
+      if (def.max && tok.type !== 'speed') {
+        box(x + size - 34, y + size - 34, 30, 30, 'rgba(0,0,0,0.55)', 8);
+        label(String(tok.n), x + size - 19, y + size - 18, 24, '#ffffff', true);
+      }
+      if (outline) { c.strokeStyle = outline; c.lineWidth = 6; c.beginPath(); c.roundRect(x - 2, y - 2, size + 4, size + 4, 16); c.stroke(); }
+    };
+    if (!program.tokens.length) label('Toca las fichas de abajo para crear el programa', W / 2, 230, 30, '#9aa4b2');
+    program.tokens.forEach((tok, i) => {
+      const x = 32 + (i % 9) * 108, y = 134 + Math.floor(i / 9) * 100;
+      tile(tok, x, y, 92, i === program.active ? '#ffffff' : i === program.selected ? '#35e0ff' : null);
+      zone(x, y, 92, 92, () => { program.selected = program.selected === i ? -1 : i; this.dirty = true; });
+    });
+
+    // Edición de la ficha seleccionada
+    const sel = program.tokens[program.selected];
+    if (sel) {
+      const def = T[sel.type];
+      const buttons = [];
+      if (def.max) buttons.push(['−', () => program.bump(program.selected, -1)], [String(sel.n), null], ['+', () => program.bump(program.selected, 1)]);
+      buttons.push(['◀', () => program.move(program.selected, -1)], ['▶', () => program.move(program.selected, 1)], ['✕ Quitar', () => program.remove(program.selected)]);
+      label(def.name, 32, 386, 30, '#f1f4f8', true, 'left');
+      let x = W - 20;
+      for (const [text, run] of buttons.slice().reverse()) {
+        const w = text.length > 2 ? 190 : 84;
+        x -= w;
+        if (run) { box(x, 348, w - 8, 76, '#3d4654'); zone(x, 348, w - 8, 76, run); }
+        label(text, x + (w - 8) / 2, 386, 36, '#ffffff', true);
+      }
+    } else label('Toca una ficha del programa para cambiarla', W / 2, 386, 28, '#9aa4b2');
+
+    // Paleta
+    const rows = [['Mover', ['walk', 'backward', 'turnL', 'turnR']], ['Acciones', ['hello', 'jump', 'dance', 'pushUp']], ['Control', ['repeat', 'end', 'wait', 'ifObstacle', 'speed']]];
+    const full = program.tokens.length >= program.MAX;
+    rows.forEach(([name, types], r) => {
+      const y = 440 + r * 118;
+      label(name, 32, y + 50, 30, '#9aa4b2', false, 'left');
+      types.forEach((type, k) => {
+        const x = 200 + k * 116;
+        c.globalAlpha = full ? 0.35 : 1;
+        tile({ type, n: T[type].n ?? 1 }, x, y, 100, null);
+        c.globalAlpha = 1;
+        zone(x, y, 100, 100, () => program.add(type));
+      });
+    });
+    this.mesh.material.map.needsUpdate = true;
+  },
+};
+blockPanel.init();
+program.load();
 
 /* ==========================================================================
  * ui — panel de la fase 0: servos, posturas y vista previa de marchas
@@ -1756,7 +2183,18 @@ const ui = {
     document.getElementById('btnHome').addEventListener('click', () => { this.stopGait(); applyAngles(homePose()); });
     document.getElementById('btnReset').addEventListener('click', () => { if (physics.ready) physics.reset(); });
     document.getElementById('btnDrop').addEventListener('click', () => { if (physics.ready) physics.reset(0.3); });
-    document.getElementById('chkEnv').addEventListener('change', (e) => environment.setDebug(e.target.checked));
+    // Opciones de depuración: se recuerdan entre sesiones
+    const option = (id, key, apply) => {
+      const box = document.getElementById(id);
+      try { box.checked = localStorage.getItem(key) === '1'; } catch { /* sin almacenamiento */ }
+      apply(box.checked);
+      box.addEventListener('change', () => {
+        apply(box.checked);
+        try { localStorage.setItem(key, box.checked ? '1' : '0'); } catch { /* sin almacenamiento */ }
+      });
+    };
+    option('chkEnv', 'kamear.verEntorno', (on) => environment.setDebug(on));
+    option('chkHud', 'kamear.rotulo', (on) => { hud.enabled = on; });
     document.getElementById('btnZero').addEventListener('click', () => { this.stopGait(); applyAngles(zeroPose()); });
     this.btnAR.addEventListener('click', async () => {
       if (ar.session) { ar.session.end(); return; }
@@ -1778,6 +2216,7 @@ const ui = {
 
   /** Empieza un movimiento desde la postura actual. */
   play(def) {
+    program.stop();
     this.motionDef = def;
     this.motion = compileMotion(def.make(), physics.ready ? physics.targets : robot.angles);
     this.motionStart = performance.now();
@@ -1897,6 +2336,17 @@ function runSelfTest() {
   check('jump: el impulso es instantáneo', sameP(m.sample(350), [110, 70, 55, 125, 30, 150, 125, 55]));
   check('jump: termina en home', sameP(m.end, home));
 
+  // Programa: orden de ejecución de las fichas
+  const tk = (...types) => types.map((t) => (typeof t === 'string' ? { type: t, n: 1 } : { type: t[0], n: t[1] }));
+  const order = (tokens, obstacle = false) => [...program.order(tokens, () => obstacle)].join(',');
+  check('programa: las fichas se ejecutan en orden', order(tk('walk', 'hello', 'jump')) === '0,1,2');
+  check('programa: repetir 2 ejecuta dos veces lo que abraza', order(tk('walk', ['repeat', 2], 'hello', 'end', 'jump')) === '0,2,2,4');
+  check('programa: un paréntesis sin cerrar se cierra al final', order(tk(['repeat', 3], 'walk')) === '1,1,1');
+  check('programa: repeticiones anidadas', order(tk(['repeat', 2], 'walk', ['repeat', 2], 'hello', 'end', 'end')) === '1,3,3,1,3,3');
+  check('programa: «si hay obstáculo» se salta sin obstáculo y entra con él',
+    order(tk('ifObstacle', 'turnL', 'end', 'walk')) === '3' && order(tk('ifObstacle', 'turnL', 'end', 'walk'), true) === '1,3');
+  check('programa: un cierre suelto no hace nada', order(tk('end', 'walk', 'end')) === '1');
+
   // Todos los movimientos: dentro del recorrido de los servos y sin choques
   for (const def of MOTIONS) {
     const motion = run(def.make());
@@ -1955,6 +2405,30 @@ function runSelfTest() {
     settle();
     pose = play(kame32.jump());
     check('físicas: jump salta hacia delante y cae de pie', pose.up > 0.99 && pose.z > 0.01, `avance ${(pose.z * 1000).toFixed(0)} mm`);
+    // Programa: giro de 90° medido y secuencia con repetición
+    const runProgram = (tokens, limit = 60) => {
+      settle();
+      const saved = program.tokens;
+      program.tokens = tokens; program.halt(); program.begin(); program.running = true;
+      let clock = 0;
+      const dtMs = PHYS.dt * 1000;
+      while (program.running && clock < limit * 1000) { program.tick(clock); physics.step(); clock += dtMs; }
+      physics.simulate(0.5, () => home);
+      program.halt(); program.tokens = saved;
+      return { pose: physics.pose(), seconds: clock / 1000 };
+    };
+    let res = runProgram([{ type: 'turnL', n: 1 }]);
+    check('programa: girar a la izquierda da 90° (±12°)', Math.abs(deg(res.pose.yaw) - 90) < 12 && res.pose.up > 0.99, `giro ${deg(res.pose.yaw).toFixed(0)}° en ${res.seconds.toFixed(1)} s`);
+    res = runProgram([{ type: 'turnR', n: 2 }]);
+    check('programa: girar a la derecha ×2 da 180° (±15°)', Math.abs(Math.abs(deg(res.pose.yaw)) - 180) < 15 && res.pose.up > 0.99, `giro ${deg(res.pose.yaw).toFixed(0)}°`);
+    res = runProgram([{ type: 'repeat', n: 2 }, { type: 'walk', n: 1 }, { type: 'end', n: 1 }, { type: 'jump', n: 1 }]);
+    check('programa: repetir 2 (avanzar) y saltar avanza y termina de pie', res.pose.z > 0.15 && res.pose.up > 0.99, `avance ${(res.pose.z * 1000).toFixed(0)} mm en ${res.seconds.toFixed(1)} s`);
+    physics.setEnv('muro', new Float32Array([-3, 0, 2, 3, 0, 2, 3, 1, 2, -3, 1, 2]), new Uint32Array([0, 1, 2, 0, 2, 3]));
+    settle();
+    const ahead = program.obstacleAhead();
+    physics.removeEnv('muro');
+    physics.step();
+    check('programa: el sensor ve un muro a 20 cm y no ve nada sin él', ahead && !program.obstacleAhead());
     // Entorno: un muro de malla delante detiene al robot; sin suelo plano, un plano lo sostiene
     const quad = (x0, x1, y0, y1, z0, z1) => new Float32Array([x0, y0, z0, x1, y0, z1, x1, y1, z1, x0, y1, z0]);
     const quadIdx = new Uint32Array([0, 1, 2, 0, 2, 3]);
@@ -2019,7 +2493,7 @@ let lastFrame = performance.now();
 renderer.setAnimationLoop((time, frame) => {
   const now = performance.now(), dt = (now - lastFrame) / 1000;
   lastFrame = now;
-  if (robot.legs.length) ui.tick();
+  if (robot.legs.length) { ui.tick(); program.tick(); }
   if (physics.ready) {
     physics.update(dt);
     // Si se cae al vacío (por el borde de una mesa sin suelo detectado), vuelve a su sitio
@@ -2031,7 +2505,7 @@ renderer.setAnimationLoop((time, frame) => {
   if (frame && ar.session) ar.update(frame);
   else {
     // La cámara y la luz siguen al robot
-    _p.copy(robot.root.position).setY(0.03).sub(controls.target);
+    _p.copy(robot.root.position).setY(0.15).sub(controls.target);
     if (physics.ready && _p.lengthSq() > 1e-8) {
       _p.multiplyScalar(Math.min(1, dt * 4));
       controls.target.add(_p); camera.position.add(_p);
@@ -2040,6 +2514,7 @@ renderer.setAnimationLoop((time, frame) => {
     sun.target.position.copy(robot.root.position);
     controls.update();
   }
+  blockPanel.update();
   renderer.render(scene, camera);
 });
 
@@ -2063,7 +2538,7 @@ try {
   } else {
     setStatus('Modo 3D. Este navegador no ofrece AR (WebXR immersive-ar).' + physicsNote);
   }
-  window.kame = { robot, physics, PHYS, applyAngles, kame32, MOTIONS, compileMotion, platform, environment, ar, hud }; // para depurar desde la consola
+  window.kame = { robot, physics, PHYS, applyAngles, kame32, MOTIONS, compileMotion, platform, environment, ar, hud, program, blockPanel }; // para depurar desde la consola
   if (new URLSearchParams(location.search).has('test')) runSelfTest();
   if (new URLSearchParams(location.search).has('env')) environment.demo();
 } catch (e) {

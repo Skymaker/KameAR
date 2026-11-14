@@ -210,6 +210,23 @@ Implementado y comprobado en escritorio (autotest y entorno simulado con `?env`)
 - **iOS:** el puente queda preparado (`IOS_BRIDGE.variantLaunchKey` en `index.html`); sin clave de Variant Launch el iPhone sigue en modo 3D.
 - **Pendiente:** anclajes (el robot no se reancla si el seguimiento deriva) y medir el rendimiento en Quest con la malla de la habitación.
 
+Añadido tras las pruebas en Quest: el pellizco de la mano izquierda sale de la AR; colocado en una pared, el robot cae hasta lo que haya debajo; la malla azul y el rótulo flotante son opciones del panel, desactivadas por defecto.
+
+### Estado de la fase 4
+
+Implementado y comprobado en escritorio (autotest y uso con ratón); **falta probarlo en los dispositivos**.
+
+- **Panel de fichas:** un plano dibujado en un lienzo que flota sobre el robot, de cara a la cámara y con tamaño aparente constante. Se toca con el ratón o el dedo en modo 3D, con un toque en la pantalla en AR y, en el visor, apuntando con la mano o el mando derecho y pellizcando (se dibuja el rayo y el punto de contacto).
+- **Fichas:** avanzar, retroceder, girar a izquierda y derecha, saludar, saltar, bailar, flexiones, repetir, cerrar, esperar, si hay obstáculo y velocidad. Hasta 18 fichas, en dos filas.
+- **Edición:** tocar una ficha de la paleta la añade; tocar una del programa permite cambiar su número, moverla o quitarla.
+- **Ejecución:** ejecutar, paso a paso, parar y borrar. La ficha activa se ilumina.
+- **Giros:** la ficha de giro sigue la marcha hasta que el rumbo medido cambia 90° por unidad (medido: 90° ±12°).
+- **Avance:** cada unidad de avanzar o retroceder son 2 ciclos de la marcha, unos 11 cm.
+- **Sensor:** «si hay obstáculo» lanza un rayo de 25 cm hacia delante contra el entorno.
+- **Persistencia:** el programa se guarda en `localStorage`.
+- **Colocación en AR:** con el robot colocado, los toques solo actúan sobre el panel; el botón «Mover» permite recolocarlo.
+- **Pendiente:** los niveles (1 a 3) y el corchete de color que abraza las fichas repetidas (ahora se marca con paréntesis).
+
 ## 11. Riesgos
 
 | Riesgo | Mitigación |
