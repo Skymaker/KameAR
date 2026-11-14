@@ -81,7 +81,7 @@
     <div class="head">
       <div class="title">
         <h1>KameAR</h1>
-        <p class="sub">Fase 4 · programación por bloques</p>
+        <p class="sub">Fase 5 · manos en el visor</p>
       </div>
       <button id="btnPanel" aria-expanded="true" aria-label="Ocultar el panel" title="Ocultar el panel">▾</button>
     </div>
@@ -106,6 +106,9 @@
     <div class="row">
       <label class="check"><input type="checkbox" id="chkEnv"> Ver entorno detectado</label>
       <label class="check"><input type="checkbox" id="chkHud"> Rótulo flotante (visor)</label>
+      <label class="check">Mano dominante
+        <select id="selHand"><option value="right">Derecha</option><option value="left">Izquierda</option></select>
+      </label>
     </div>
     <p id="envInfo"></p>
     <p id="collision" role="status"></p>
@@ -1235,7 +1238,9 @@ const physics = {
   /** Avanza la simulación el tiempo real transcurrido y actualiza el modelo visible. */
   update(dt) {
     this.acc += Math.min(dt, 0.05);
-    while (this.acc >= PHYS.dt) { this.step(); this.acc -= PHYS.dt; }
+    const n = Math.floor(this.acc / PHYS.dt);
+    for (let k = 0; k < n; k++) { hands.advance(k, n); this.step(); }
+    this.acc -= n * PHYS.dt;
     this.syncVisual();
   },
 
@@ -1673,13 +1678,16 @@ const ar = {
     this.hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
     // Mano o mando izquierdo: salir de la AR. El resto (derecho, toque en el móvil): colocar el robot.
     session.addEventListener('select', (e) => {
-      if (e.inputSource?.handedness === 'left') { session.end(); return; }
+      // Pellizco de la mano no dominante: salir de la AR (salvo con el panel en la palma, donde sería un accidente)
+      if (e.inputSource?.handedness === hands.other) { if (!hands.palmShown) session.end(); return; }
+      // El pellizco que coge o suelta el robot no pulsa nada
+      if (hands.grabbing || performance.now() - hands.grabEndedAt < 400) return;
       // Con el robot ya colocado, los toques solo actúan sobre el panel de bloques
       if (this.placed) blockPanel.clickFromXR(e); else this.place();
     });
     session.addEventListener('end', () => this.end());
     setStatus(platform.caps.domOverlay ? 'Apunta al suelo o a una mesa y toca para colocar el robot.'
-      : 'Pellizco derecho: colocar el robot. Pellizco izquierdo: salir.');
+      : `Pellizco ${hands.dominant === 'right' ? 'derecho' : 'izquierdo'}: colocar el robot. Pellizco ${hands.dominant === 'right' ? 'izquierdo' : 'derecho'}: salir.`);
     ui.btnAR.textContent = 'Salir de AR';
     // En el móvil, el panel de herramientas se recoge para dejar sitio al panel de fichas
     const tools = document.getElementById('panel');
@@ -1730,6 +1738,7 @@ const ar = {
       this.session.initiateRoomCapture().catch((e) => console.warn('Configuración del espacio:', e));
     }
     if (!platform.caps.domOverlay && hud.enabled) hud.update(); else hud.mesh.visible = false;
+    hands.update(frame);
     blockPanel.updatePointer(frame);
   },
 
@@ -1737,6 +1746,7 @@ const ar = {
     this.session = null;
     this.hitTestSource = null;
     this.reticle.visible = false;
+    hands.reset();
     blockPanel.pointer.visible = false;
     program.stop();
     this.onWall = false;
@@ -2056,9 +2066,7 @@ const blockPanel = {
     const t = this.target();
     if (!t) return false;
     if (!t.panel) { this.hidden = !this.hidden; this.dirty = true; return true; }
-    const x = t.hit.uv.x * this.W, y = (1 - t.hit.uv.y) * this.H;
-    const zone = this.zones.find((z) => x >= z.x && x <= z.x + z.w && y >= z.y && y <= z.y + z.h);
-    if (zone) zone.run();
+    this.press(t.hit.uv.x * this.W, (1 - t.hit.uv.y) * this.H);
     return true;
   },
 
@@ -2081,7 +2089,7 @@ const blockPanel = {
     let shown = false;
     if (ar.placed) {
       for (const source of frame.session.inputSources) {
-        if (source.targetRayMode !== 'tracked-pointer' || source.handedness === 'left') continue;
+        if (source.targetRayMode !== 'tracked-pointer' || source.handedness === hands.other || hands.grabbing) continue;
         if (!this.xrRay(frame, source)) continue;
         const hit = this.target()?.hit;
         const ray = this.raycaster.ray, length = hit ? hit.distance : 1.2;
@@ -2098,12 +2106,25 @@ const blockPanel = {
     this.pointer.visible = shown;
   },
 
-  /** Sitúa el panel sobre el robot, de cara a la cámara y con tamaño aparente constante. */
+  /**
+   * Sitúa el panel: sobre la palma de la mano no dominante cuando esta mira a
+   * la cara; si no, sobre el robot, de cara a la cámara y con tamaño aparente constante.
+   */
   update() {
-    const visible = robot.legs.length > 0 && (!ar.session || ar.placed) && !this.hidden;
+    const base = robot.legs.length > 0 && (!ar.session || ar.placed);
+    const palm = base && hands.palmShown ? hands.palm : null;
+    const visible = base && (!!palm || !this.hidden);
     this.mesh.visible = visible;
     if (!visible) return;
     if (this.dirty) { this.draw(); this.dirty = false; }
+    if (palm) {
+      // 22 cm de ancho: fichas de 2 cm, cómodas para el índice
+      this.mesh.scale.setScalar(0.22);
+      this.mesh.position.copy(palm.center).addScaledVector(palm.normal, 0.03);
+      this.mesh.position.y += 0.14;
+      this.mesh.lookAt(hands.head);
+      return;
+    }
     const cam = ar.session ? renderer.xr.getCamera() : camera;
     cam.getWorldPosition(_p);
     robot.root.getWorldPosition(_q);
@@ -2111,6 +2132,30 @@ const blockPanel = {
     this.mesh.scale.setScalar(width);
     this.mesh.position.copy(_q); this.mesh.position.y += 0.07 + width * this.H / this.W / 2;
     this.mesh.lookAt(_p);
+  },
+
+  /** Pulsa la zona que haya en el punto (x, y) del lienzo. */
+  press(x, y) {
+    const zone = this.zones.find((z) => x >= z.x && x <= z.x + z.w && y >= z.y && y <= z.y + z.h);
+    if (zone) zone.run();
+  },
+
+  /**
+   * Pulsación directa con la yema del índice: se dispara al acercarse a menos
+   * de 1 cm del panel y no se repite hasta que el dedo se retira 3 cm.
+   */
+  pokeArmed: true,
+  poke(tip) {
+    if (!this.mesh.visible) { this.pokeArmed = true; return false; }
+    this.mesh.updateMatrixWorld();
+    const local = this.mesh.worldToLocal(_p.copy(tip));
+    const half = this.H / this.W / 2, d = local.z * this.mesh.scale.x;
+    const inside = Math.abs(local.x) <= 0.5 && Math.abs(local.y) <= half;
+    if (!inside || d > 0.03) { this.pokeArmed = true; return false; }
+    if (!this.pokeArmed || d > 0.01 || d < -0.03) return false;
+    this.pokeArmed = false;
+    this.press((local.x + 0.5) * this.W, (0.5 - local.y / (2 * half)) * this.H);
+    return true;
   },
 
   draw() {
@@ -2207,6 +2252,174 @@ blockPanel.init();
 program.load();
 
 /* ==========================================================================
+ * hands — manos en el visor
+ *
+ * - Mano no dominante: al volver la palma hacia la cara, el panel de fichas
+ *   aparece sobre ella.
+ * - Mano dominante: el índice pulsa las fichas; el pellizco junto al robot lo
+ *   coge (y al soltar, lo deja caer o lo lanza).
+ * - Las dos: yemas y palma son esferas sólidas que empujan al robot.
+ * ========================================================================== */
+
+const hands = {
+  dominant: 'right',
+  get other() { return this.dominant === 'right' ? 'left' : 'right'; },
+  JOINTS: ['wrist', 'thumb-tip', 'index-finger-tip', 'middle-finger-tip', 'ring-finger-tip', 'pinky-finger-tip',
+    'index-finger-metacarpal', 'middle-finger-metacarpal', 'pinky-finger-metacarpal'],
+  /** Articulaciones que empujan, con su radio en metros. */
+  PUSHERS: [['thumb-tip', 0.009], ['index-finger-tip', 0.009], ['middle-finger-tip', 0.009], ['ring-finger-tip', 0.009],
+    ['pinky-finger-tip', 0.009], ['middle-finger-metacarpal', 0.024]],
+  head: new THREE.Vector3(),
+  side: {},
+  /** Palma de la mano no dominante vuelta hacia la cara, y su centro y normal. */
+  palmShown: false,
+  palm: { center: new THREE.Vector3(), normal: new THREE.Vector3() },
+  grabbing: false,
+  grabEndedAt: 0,
+  /** Mundo de física en el que están creadas las esferas de las manos. */
+  world: null,
+
+  init() {
+    for (const name of ['left', 'right']) {
+      const joints = {};
+      for (const j of this.JOINTS) joints[j] = new THREE.Vector3();
+      this.side[name] = { tracked: false, joints, pinching: false, wasPinching: false, pinch: new THREE.Vector3(), pushers: [] };
+    }
+  },
+
+  /** Lee las articulaciones de las manos del fotograma AR. */
+  update(frame) {
+    const ref = renderer.xr.getReferenceSpace();
+    for (const name in this.side) this.side[name].tracked = false;
+    for (const source of frame.session.inputSources) {
+      const hand = this.side[source.handedness];
+      if (!source.hand || !hand || !frame.getJointPose) continue;
+      let ok = true;
+      for (const j of this.JOINTS) {
+        const space = source.hand.get(j), pose = space && frame.getJointPose(space, ref);
+        if (!pose) { ok = false; break; }
+        hand.joints[j].copy(pose.transform.position);
+      }
+      hand.tracked = ok;
+    }
+    renderer.xr.getCamera().getWorldPosition(this.head);
+    this.process();
+  },
+
+  /** Interpreta el estado de las manos (también se usa en las pruebas, con manos simuladas). */
+  process(now = performance.now()) {
+    for (const name in this.side) {
+      const h = this.side[name];
+      h.wasPinching = h.pinching;
+      if (!h.tracked) { h.pinching = false; continue; }
+      const d = h.joints['thumb-tip'].distanceTo(h.joints['index-finger-tip']);
+      h.pinching = h.pinching ? d < 0.04 : d < 0.018; // con histéresis
+      h.pinch.addVectors(h.joints['thumb-tip'], h.joints['index-finger-tip']).multiplyScalar(0.5);
+    }
+    const placed = robot.legs.length > 0 && placement.visible;
+
+    // Palma de la mano no dominante hacia la cara (con histéresis para que no parpadee)
+    const nd = this.side[this.other];
+    if (nd.tracked) {
+      const w = nd.joints.wrist;
+      const a = _p.subVectors(nd.joints['index-finger-metacarpal'], w), b = _q.subVectors(nd.joints['pinky-finger-metacarpal'], w);
+      const normal = this.palm.normal.crossVectors(a, b).normalize();
+      if (this.other === 'left') normal.negate();
+      this.palm.center.copy(nd.joints['middle-finger-metacarpal']);
+      const facing = normal.dot(_p.subVectors(this.head, this.palm.center).normalize());
+      this.palmShown = this.palmShown ? facing > 0.3 : facing > 0.55;
+    } else this.palmShown = false;
+
+    // Coger: pellizco de la mano dominante a menos de 12 cm del robot
+    const dom = this.side[this.dominant];
+    if (physics.ready && placed) {
+      robot.root.getWorldPosition(_p);
+      if (!this.grabbing && dom.pinching && !dom.wasPinching && dom.pinch.distanceTo(_p) < 0.12) this.grabbing = true;
+    }
+    if (this.grabbing && (!dom.pinching || !placed)) { this.grabbing = false; this.grabEndedAt = now; }
+    if (this.grabbing) this.carry(dom.pinch);
+
+    // Pulsar el panel con el índice de la mano dominante
+    if (dom.tracked && !this.grabbing) blockPanel.poke(dom.joints['index-finger-tip']);
+
+    this.aim(placed);
+  },
+
+  /** Lleva el cuerpo del robot hacia el pellizco, como colgado de un muelle. */
+  carry(pinch) {
+    const S = PHYS.scale, body = physics.body;
+    placement.updateMatrixWorld();
+    const target = placement.worldToLocal(_q.copy(pinch)).multiplyScalar(S);
+    target.y -= 0.03 * S; // se le coge por arriba
+    const t = body.translation();
+    _p.set(target.x - t.x, target.y - t.y, target.z - t.z).multiplyScalar(15);
+    if (_p.length() > 40) _p.setLength(40);
+    body.setLinvel({ x: _p.x, y: _p.y, z: _p.z }, true);
+    const w = body.angvel();
+    body.setAngvel({ x: w.x * 0.85, y: w.y * 0.85, z: w.z * 0.85 }, true);
+  },
+
+  /** Crea las esferas de las manos en el mundo de física actual (cinemáticas: empujan, nada las mueve). */
+  build() {
+    const R = physics.R, world = physics.world;
+    this.world = world;
+    for (const name in this.side) {
+      this.side[name].pushers = this.PUSHERS.map(([joint, radius]) => {
+        const body = world.createRigidBody(R.RigidBodyDesc.kinematicPositionBased().setTranslation(0, -1000, 0));
+        world.createCollider(R.ColliderDesc.ball(radius * PHYS.scale).setFriction(0.8)
+          .setCollisionGroups(groups(GROUP.env, 0xffff)), body);
+        return { joint, body, active: false, parked: true, prev: new THREE.Vector3(), target: new THREE.Vector3() };
+      });
+    }
+  },
+
+  /** Fija el destino de cada esfera, en el sistema de colocación del robot. */
+  aim(placed) {
+    if (!physics.ready) return;
+    if (this.world !== physics.world) this.build();
+    placement.updateMatrixWorld();
+    for (const name in this.side) {
+      const h = this.side[name];
+      // La mano que coge el robot no lo empuja a la vez
+      const active = placed && h.tracked && !(this.grabbing && name === this.dominant);
+      for (const pusher of h.pushers) {
+        pusher.active = active;
+        if (active) placement.worldToLocal(pusher.target.copy(h.joints[pusher.joint])).multiplyScalar(PHYS.scale);
+      }
+    }
+  },
+
+  /** Antes del paso `k` de `n` de este fotograma: avanza las esferas hacia su destino, repartido entre los pasos. */
+  advance(k, n) {
+    if (this.world !== physics.world) return;
+    for (const name in this.side) {
+      for (const pusher of this.side[name].pushers) {
+        if (!pusher.active) {
+          if (!pusher.parked) { pusher.body.setTranslation({ x: 0, y: -1000, z: 0 }, true); pusher.parked = true; }
+          continue;
+        }
+        if (pusher.parked) { // reaparece en su sitio sin barrer el camino
+          pusher.parked = false;
+          pusher.prev.copy(pusher.target);
+          pusher.body.setTranslation({ x: pusher.target.x, y: pusher.target.y, z: pusher.target.z }, true);
+          continue;
+        }
+        pusher.prev.lerp(pusher.target, 1 / (n - k));
+        pusher.body.setNextKinematicTranslation({ x: pusher.prev.x, y: pusher.prev.y, z: pusher.prev.z });
+      }
+    }
+  },
+
+  reset() {
+    for (const name in this.side) { const h = this.side[name]; h.tracked = false; h.pinching = false; h.wasPinching = false; }
+    this.palmShown = false; this.grabbing = false;
+    this.aim(false);
+    this.advance(0, 1);
+  },
+};
+hands.init();
+
+/* ==========================================================================
  * ui — panel de la fase 0: servos, posturas y vista previa de marchas
  * ========================================================================== */
 
@@ -2263,6 +2476,13 @@ const ui = {
     };
     option('chkEnv', 'kamear.verEntorno', (on) => environment.setDebug(on));
     option('chkHud', 'kamear.rotulo', (on) => { hud.enabled = on; });
+    const selHand = document.getElementById('selHand');
+    try { if (localStorage.getItem('kamear.mano') === 'left') selHand.value = 'left'; } catch { /* sin almacenamiento */ }
+    hands.dominant = selHand.value;
+    selHand.addEventListener('change', () => {
+      hands.dominant = selHand.value;
+      try { localStorage.setItem('kamear.mano', selHand.value); } catch { /* sin almacenamiento */ }
+    });
     document.getElementById('btnZero').addEventListener('click', () => { this.stopGait(); applyAngles(zeroPose()); });
     this.btnAR.addEventListener('click', async () => {
       if (ar.session) { ar.session.end(); return; }
@@ -2497,6 +2717,51 @@ function runSelfTest() {
     physics.removeEnv('muro');
     physics.step();
     check('programa: el sensor ve un muro a 20 cm y no ve nada sin él', ahead && !program.obstacleAhead());
+    // Manos simuladas: palma, pulsación, coger y empujar
+    const V = (x, y, z) => new THREE.Vector3(x, y, z);
+    const setHand = (name, wrist, palmUp, tips = {}) => {
+      const h = hands.side[name], j = h.joints, sx = (name === 'left') === palmUp ? -1 : 1;
+      j.wrist.copy(wrist);
+      j['index-finger-metacarpal'].copy(wrist).add(V(sx * 0.03, 0, -0.08));
+      j['middle-finger-metacarpal'].copy(wrist).add(V(0, 0, -0.09));
+      j['pinky-finger-metacarpal'].copy(wrist).add(V(-sx * 0.03, 0, -0.08));
+      // Mano abierta: las yemas separadas 2 cm entre sí, con el pulgar a un lado
+      ['thumb-tip', 'index-finger-tip', 'middle-finger-tip', 'ring-finger-tip', 'pinky-finger-tip'].forEach((tip, k) => {
+        j[tip].copy(tips[tip] ?? V(wrist.x + sx * (0.05 - k * 0.02), wrist.y, wrist.z - (k ? 0.17 : 0.08)));
+      });
+      h.tracked = true;
+    };
+    const frames = (n, each) => { for (let k = 0; k < n; k++) { each(k); hands.process(k * 14); physics.update(1 / 72); } };
+    settle();
+    hands.dominant = 'right'; hands.head.set(-0.3, 0.9, 0.3);
+    setHand('left', V(-0.3, 0.3, 0.3), true); hands.process(0);
+    const palmUp = hands.palmShown;
+    setHand('left', V(-0.3, 0.3, 0.3), false); hands.process(0);
+    check('manos: el panel sale con la palma hacia la cara y se va al volverla', palmUp && !hands.palmShown);
+    // Pulsar la ficha «avanzar» de la paleta con el índice
+    blockPanel.hidden = false; blockPanel.update(); blockPanel.pokeArmed = true;
+    const before = program.tokens.length, savedTokens = program.tokens.slice();
+    const half = blockPanel.H / blockPanel.W / 2;
+    const tipAt = (d) => blockPanel.mesh.localToWorld(V(250 / blockPanel.W - 0.5, (0.5 - 490 / blockPanel.H) * 2 * half, d / blockPanel.mesh.scale.x));
+    const far = tipAt(0.05), near = tipAt(0.004);
+    blockPanel.poke(far); blockPanel.poke(near); blockPanel.poke(near);
+    check('manos: el índice pulsa una ficha una sola vez', program.tokens.length === before + 1 && program.tokens.at(-1).type === 'walk');
+    program.tokens = savedTokens; program.halt(); program.save(); blockPanel.dirty = true;
+    hands.side.left.tracked = false;
+    // Coger con el pellizco y levantar 12 cm
+    const pinchAt = (y) => setHand('right', V(0, y + 0.02, 0.2), false, { 'thumb-tip': V(0.004, y, 0), 'index-finger-tip': V(-0.004, y, 0) });
+    frames(60, (k) => pinchAt(0.06 + Math.min(k, 40) * 0.003));
+    pose = physics.pose();
+    check('manos: el pellizco coge el robot y lo levanta', hands.grabbing && pose.y > 0.1, `altura ${(pose.y * 1000).toFixed(0)} mm`);
+    frames(110, () => setHand('right', V(0, 0.4, 0.2), false));
+    pose = physics.pose();
+    check('manos: al soltarlo cae y queda en el suelo', !hands.grabbing && pose.y < 0.06, `altura ${(pose.y * 1000).toFixed(0)} mm`);
+    // Empujar con la mano abierta, de lado
+    settle();
+    frames(60, (k) => { const x = 0.16 - k * 0.003; setHand('right', V(x, 0.03, 0.1), false, { 'index-finger-tip': V(x, 0.03, 0), 'thumb-tip': V(x + 0.05, 0.05, 0.05) }); });
+    pose = physics.pose();
+    check('manos: la mano empuja al robot', pose.x < -0.02, `desplazamiento ${(pose.x * 1000).toFixed(0)} mm`);
+    hands.reset();
     // Entorno: un muro de malla delante detiene al robot; sin suelo plano, un plano lo sostiene
     const quad = (x0, x1, y0, y1, z0, z1) => new Float32Array([x0, y0, z0, x1, y0, z1, x1, y1, z1, x0, y1, z0]);
     const quadIdx = new Uint32Array([0, 1, 2, 0, 2, 3]);
@@ -2606,7 +2871,7 @@ try {
   } else {
     setStatus('Modo 3D. Este navegador no ofrece AR (WebXR immersive-ar).' + physicsNote);
   }
-  window.kame = { robot, physics, PHYS, applyAngles, kame32, MOTIONS, compileMotion, platform, environment, ar, hud, program, blockPanel }; // para depurar desde la consola
+  window.kame = { robot, physics, PHYS, applyAngles, kame32, MOTIONS, compileMotion, platform, environment, ar, hud, program, blockPanel, hands }; // para depurar desde la consola
   if (new URLSearchParams(location.search).has('test')) runSelfTest();
   if (new URLSearchParams(location.search).has('env')) environment.demo();
 } catch (e) {

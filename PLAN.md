@@ -227,6 +227,19 @@ Implementado y comprobado en escritorio (autotest y uso con ratón); **falta pro
 - **Colocación en AR:** con el robot colocado, los toques solo actúan sobre el panel; el botón «Mover» permite recolocarlo.
 - **Pendiente:** los niveles (1 a 3) y el corchete de color que abraza las fichas repetidas (ahora se marca con paréntesis).
 
+Añadido tras las pruebas: botón para quitar fichas de una en una, «repetir» y «esperar» hasta 99 (con pasos de 10), el panel se oculta al ejecutar y vuelve al tocar el cuerpo del robot. En el visor, el robot se apoya en el plano horizontal detectado (llevado a la altura de la retícula) y se descartan los triángulos casi horizontales de la malla a esa altura; la malla azul se dibuja sin prueba de profundidad para que la oclusión no la tape.
+
+### Estado de la fase 5
+
+Implementado y comprobado en escritorio con manos simuladas (autotest); **falta probarlo en las Quest**.
+
+- **Panel en la palma:** al volver hacia la cara la palma de la mano no dominante, el panel de fichas aparece sobre ella (22 cm de ancho, fichas de 2 cm), con histéresis para que no parpadee.
+- **Pulsar con el índice:** la yema del índice de la mano dominante pulsa al acercarse a menos de 1 cm del panel, y no repite hasta retirarse 3 cm. El rayo con pellizco sigue funcionando.
+- **Coger:** un pellizco de la mano dominante a menos de 12 cm del robot lo coge; el cuerpo sigue al pellizco y al soltar cae o sale lanzado.
+- **Empujar:** las cinco yemas y la palma de cada mano son esferas sólidas que empujan al robot.
+- **Mano dominante:** se elige en el panel de herramientas (derecha por defecto). El pellizco de la otra mano sale de la AR, salvo mientras muestra el panel en la palma.
+- **Pendiente:** sin respuesta háptica ni sonora al pulsar, y sin mandos para coger o empujar (con mandos solo funciona el rayo).
+
 ## 11. Riesgos
 
 | Riesgo | Mitigación |
