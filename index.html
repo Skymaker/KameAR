@@ -3,7 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>KameAR</title>
+<title>KameAR · robot cuadrúpedo en realidad aumentada</title>
+<meta name="description" content="Programa con fichas un robot cuadrúpedo Kame32 en realidad aumentada: camina por tu suelo, choca con tus muebles y se deja coger con la mano. Para móviles y Meta Quest.">
+<meta name="theme-color" content="#14181d">
+<meta property="og:title" content="KameAR">
+<meta property="og:description" content="Un robot cuadrúpedo programable con fichas, en realidad aumentada, para móviles y Meta Quest.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2314181d'/%3E%3Cpath d='M8 44l8-22h10M56 44l-8-22H38' fill='none' stroke='%23dff214' stroke-width='7' stroke-linecap='round' stroke-linejoin='round'/%3E%3Crect x='20' y='16' width='24' height='22' rx='4' fill='%23222428' stroke='%23dff214' stroke-width='2'/%3E%3Ccircle cx='27' cy='27' r='4.5' fill='%23fff'/%3E%3Ccircle cx='37' cy='27' r='4.5' fill='%23fff'/%3E%3Ccircle cx='28' cy='28' r='2' fill='%23000'/%3E%3Ccircle cx='38' cy='28' r='2' fill='%23000'/%3E%3C/svg%3E">
 <style>
   :root {
     --bg: #14181d;
@@ -54,8 +60,20 @@
   #status:empty { display: none; }
   #status.error { border-color: #ff6b6b; color: #ffb3b3; border-radius: 12px; }
   #collision { margin: 8px 0 0; font-size: 12px; color: #ff9d9d; min-height: 1.4em; }
-  #envInfo { margin: 0; font-size: 12px; color: var(--muted); }
-  #envInfo:empty { display: none; }
+  #envInfo, #perfInfo { margin: 0; font-size: 12px; color: var(--muted); }
+  #envInfo:empty, #perfInfo:empty { display: none; }
+  .head .tools { display: flex; gap: 6px; }
+  #btnHelp { padding: 4px 10px; line-height: 1.2; }
+  #help { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(460px, calc(100vw - 24px));
+    max-height: calc(100vh - 24px); overflow: auto; padding: 18px 20px; border-radius: 14px;
+    background: var(--panel); border: 1px solid var(--line); backdrop-filter: blur(8px); }
+  #help[hidden] { display: none; }
+  #help h2 { margin: 0 0 4px; font-size: 18px; }
+  #help h3 { margin: 14px 0 4px; font-size: 13px; color: var(--accent); }
+  #help p, #help li { font-size: 13px; line-height: 1.45; }
+  #help p { margin: 0 0 6px; color: var(--muted); }
+  #help ol { margin: 0; padding-left: 20px; }
+  #help .row { margin: 14px 0 0; justify-content: flex-end; }
   #credit { margin: 10px 0 0; font-size: 11px; color: var(--muted); }
   #credit a { color: inherit; }
   #panel .head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
@@ -81,9 +99,12 @@
     <div class="head">
       <div class="title">
         <h1>KameAR</h1>
-        <p class="sub">Fase 5 · manos en el visor</p>
+        <p class="sub">Robot programable en realidad aumentada</p>
       </div>
-      <button id="btnPanel" aria-expanded="true" aria-label="Ocultar el panel" title="Ocultar el panel">▾</button>
+      <div class="tools">
+        <button id="btnHelp" aria-label="Ayuda" title="Ayuda">?</button>
+        <button id="btnPanel" aria-expanded="true" aria-label="Ocultar el panel" title="Ocultar el panel">▾</button>
+      </div>
     </div>
     <div class="row">
       <button id="btnAR" class="primary" disabled>Entrar en AR</button>
@@ -110,17 +131,36 @@
         <select id="selHand"><option value="right">Derecha</option><option value="left">Izquierda</option></select>
       </label>
     </div>
+    <div class="row">
+      <label class="check"><input type="checkbox" id="chkPerf"> Ver rendimiento</label>
+    </div>
     <p id="envInfo"></p>
+    <p id="perfInfo"></p>
     <p id="collision" role="status"></p>
     <p id="credit">Modelo 3D y marchas: <a href="https://github.com/JavierIH/kame32" target="_blank" rel="noopener">Kame32</a> de JavierIH, licencia CC BY-SA 4.0.</p>
   </div>
+  <div id="help" role="dialog" aria-labelledby="helpTitle" hidden>
+    <h2 id="helpTitle">KameAR</h2>
+    <p>Un robot cuadrúpedo que programas con fichas. Sobre él flota su panel.</p>
+    <h3>Programar</h3>
+    <ol>
+      <li>Toca las fichas de abajo del panel para añadirlas al programa.</li>
+      <li>Toca una ficha del programa para cambiar su número, moverla o quitarla.</li>
+      <li>Pulsa <b>▶ Ejecutar</b>. El panel se esconde; toca el robot para que vuelva.</li>
+    </ol>
+    <div id="helpDevice"></div>
+    <div class="row"><button id="btnHelpClose" class="primary">Empezar</button></div>
+  </div>
 </div>
+
+<noscript><p style="position:fixed;inset:0;display:grid;place-items:center;color:#fff;padding:24px;text-align:center">KameAR necesita JavaScript para funcionar.</p></noscript>
 
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { MeshBVH } from 'three-mesh-bvh';
 
 /* ==========================================================================
@@ -345,8 +385,14 @@ function compileMotion(segments, startPose) {
 const loader = new STLLoader();
 
 /** @returns {Promise<THREE.BufferGeometry>} */
+const loading = { done: 0, total: 0 };
 function loadSTL(name) {
-  return loader.loadAsync(STL_BASE + name).catch(() => {
+  loading.total++;
+  return loader.loadAsync(STL_BASE + name).then((geometry) => {
+    loading.done++;
+    setStatus(`Cargando el modelo… ${loading.done} de ${loading.total} piezas`);
+    return geometry;
+  }).catch(() => {
     throw new Error(`No se pudo cargar la pieza «${name}» desde el CDN.`);
   });
 }
@@ -440,14 +486,18 @@ function hornModel(materials) {
  * Tornillo esquemático. Sistema local en mm: la cabeza apoya en el origen y
  * sobresale hacia +Z; la caña entra hacia -Z.
  */
+const _screwGeometry = new Map();
 function screwModel(material, length, r = 1.4, headR = 2.7, headH = 1.6) {
-  const g = new THREE.Group();
-  const head = new THREE.Mesh(new THREE.CylinderGeometry(headR, headR, headH, 20).rotateX(Math.PI / 2), material);
-  head.position.z = headH / 2;
-  const shank = new THREE.Mesh(new THREE.CylinderGeometry(r, r, length, 14).rotateX(Math.PI / 2), material);
-  shank.position.z = -length / 2;
-  g.add(head, shank);
-  return g;
+  // Una sola malla por tornillo y una geometría por medida: menos llamadas de dibujo
+  const key = `${length}|${r}|${headR}|${headH}`;
+  let geometry = _screwGeometry.get(key);
+  if (!geometry) {
+    const head = new THREE.CylinderGeometry(headR, headR, headH, 20).rotateX(Math.PI / 2).translate(0, 0, headH / 2);
+    const shank = new THREE.CylinderGeometry(r, r, length, 14).rotateX(Math.PI / 2).translate(0, 0, -length / 2);
+    geometry = mergeGeometries([head, shank]);
+    _screwGeometry.set(key, geometry);
+  }
+  return new THREE.Mesh(geometry, material);
 }
 
 /** Lienzo auxiliar para las texturas dibujadas. */
@@ -1610,6 +1660,10 @@ const hud = {
   /** Se activa con la casilla «Rótulo flotante» del panel. */
   enabled: false,
   canvas: Object.assign(document.createElement('canvas'), { width: 1024, height: 192 }),
+  /** Aviso que se muestra aunque el rótulo esté desactivado, hasta el instante `until`. */
+  note: { text: '', until: 0 },
+  flash(text, seconds = 12) { this.note.text = text; this.note.until = performance.now() + seconds * 1000; },
+  get active() { return this.enabled || performance.now() < this.note.until; },
   text: null,
   mesh: null,
   init() {
@@ -1622,7 +1676,12 @@ const hud = {
   },
   /** Coloca el rótulo delante de la cámara, algo por debajo de la vista, y lo redibuja si cambia el texto. */
   update() {
-    const lines = [document.getElementById('status').textContent, document.getElementById('envInfo').textContent].filter(Boolean);
+    const lines = [];
+    if (performance.now() < this.note.until) lines.push(...this.note.text.split('\n'));
+    if (this.enabled) lines.push(document.getElementById('status').textContent, document.getElementById('envInfo').textContent);
+    if (perf.show) lines.push(document.getElementById('perfInfo').textContent);
+    for (let k = lines.length - 1; k >= 0; k--) if (!lines[k]) lines.splice(k, 1);
+    lines.splice(4);
     const text = lines.join('\n');
     this.mesh.visible = !!text;
     if (!text) return;
@@ -1631,7 +1690,7 @@ const hud = {
       const c = this.canvas.getContext('2d'), w = this.canvas.width, h = this.canvas.height;
       c.clearRect(0, 0, w, h);
       c.fillStyle = 'rgba(16,20,26,0.82)'; c.beginPath(); c.roundRect(0, 0, w, h, 28); c.fill();
-      c.fillStyle = '#f1f4f8'; c.font = '42px system-ui, sans-serif'; c.textBaseline = 'middle';
+      c.fillStyle = '#f1f4f8'; c.font = `${lines.length > 2 ? 34 : 42}px system-ui, sans-serif`; c.textBaseline = 'middle';
       lines.forEach((line, k) => c.fillText(line, 28, h * (k + 0.5) / lines.length, w - 56));
       this.mesh.material.map.needsUpdate = true;
     }
@@ -1673,6 +1732,7 @@ const ar = {
     floor.visible = false;
     placement.visible = false;
     arShadow.visible = true;
+    renderer.xr.setFoveation(1); // menos resolución en los bordes de la vista: no se nota y ahorra
     await renderer.xr.setSession(session);
     const viewerSpace = await session.requestReferenceSpace('viewer');
     this.hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
@@ -1688,6 +1748,10 @@ const ar = {
     session.addEventListener('end', () => this.end());
     setStatus(platform.caps.domOverlay ? 'Apunta al suelo o a una mesa y toca para colocar el robot.'
       : `Pellizco ${hands.dominant === 'right' ? 'derecho' : 'izquierdo'}: colocar el robot. Pellizco ${hands.dominant === 'right' ? 'izquierdo' : 'derecho'}: salir.`);
+    if (!platform.caps.domOverlay) {
+      const [dom, other] = hands.dominant === 'right' ? ['derecha', 'izquierda'] : ['izquierda', 'derecha'];
+      hud.flash(`Apunta a una superficie con la mano ${dom} y pellizca para colocar el robot.\nPellizco con la mano ${other}: salir.`, 3600);
+    }
     ui.btnAR.textContent = 'Salir de AR';
     // En el móvil, el panel de herramientas se recoge para dejar sitio al panel de fichas
     const tools = document.getElementById('panel');
@@ -1718,6 +1782,10 @@ const ar = {
     placement.visible = true;
     if (physics.ready) physics.reset();
     this.placed = true;
+    if (!platform.caps.domOverlay) {
+      const [dom, other] = hands.dominant === 'right' ? ['derecha', 'izquierda'] : ['izquierda', 'derecha'];
+      hud.flash(`Vuelve la palma ${other} hacia ti para ver el panel y púlsalo con el índice.\nPellizca junto al robot con la ${dom} para cogerlo; empújalo con las manos.`, 14);
+    }
     // El entorno se expresa respecto al punto de colocación: hay que recalcularlo
     environment.stale = true;
     environment.sync();
@@ -1737,7 +1805,7 @@ const ar = {
       this.roomCaptureAsked = true;
       this.session.initiateRoomCapture().catch((e) => console.warn('Configuración del espacio:', e));
     }
-    if (!platform.caps.domOverlay && hud.enabled) hud.update(); else hud.mesh.visible = false;
+    if (!platform.caps.domOverlay && (hud.active || perf.show)) hud.update(); else hud.mesh.visible = false;
     hands.update(frame);
     blockPanel.updatePointer(frame);
   },
@@ -2420,6 +2488,122 @@ const hands = {
 hands.init();
 
 /* ==========================================================================
+ * perf — medida del rendimiento y calidad adaptativa
+ *
+ * Cada segundo se calculan los fotogramas por segundo y el tiempo de física.
+ * Si el dispositivo no llega, se baja un nivel de calidad: primero resolución
+ * y sombras más ligeras, después sin sombras y con una física menos costosa.
+ * ========================================================================== */
+
+const perf = {
+  show: false,
+  /** 2: alta · 1: media · 0: baja */
+  quality: 2,
+  NAMES: ['baja', 'media', 'alta'],
+  frames: 0, physMs: 0, since: performance.now(),
+  fps: 0, phys: 0, calls: 0,
+  /** Segundos seguidos por debajo del objetivo. */
+  slow: 0,
+
+  init() {
+    // Móviles y visor empiezan en calidad media
+    this.apply(platform.isQuest || matchMedia('(pointer: coarse)').matches ? 1 : 2);
+  },
+
+  apply(quality) {
+    this.quality = quality;
+    if (!renderer.xr.isPresenting) renderer.setPixelRatio(Math.min(devicePixelRatio, [1, 1.5, 2][quality]));
+    sun.castShadow = quality > 0;
+    const size = quality === 2 ? 2048 : 1024;
+    if (sun.shadow.mapSize.x !== size) {
+      sun.shadow.mapSize.set(size, size);
+      sun.shadow.map?.dispose(); sun.shadow.map = null;
+    }
+    // En calidad baja la física usa menos iteraciones (el salto y las marchas están comprobados con 8)
+    if (physics.ready) physics.world.numSolverIterations = quality === 0 ? 8 : PHYS.iterations;
+  },
+
+  /** Se llama una vez por fotograma con el tiempo que ha costado la física. */
+  frame(physMs) {
+    this.frames++; this.physMs += physMs;
+    const now = performance.now(), elapsed = now - this.since;
+    if (elapsed < 1000) return;
+    this.fps = this.frames * 1000 / elapsed;
+    this.phys = this.physMs / this.frames;
+    this.calls = renderer.info.render.calls;
+    this.frames = 0; this.physMs = 0; this.since = now;
+    // Objetivo: 72 Hz en el visor, 60 en pantalla (30 si la pestaña está en segundo plano no cuenta)
+    const target = renderer.xr.isPresenting && platform.isQuest ? 72 : 60;
+    if (!document.hidden && this.fps < 0.75 * target) this.slow++; else this.slow = 0;
+    if (this.slow >= 3 && this.quality > 0) { this.apply(this.quality - 1); this.slow = 0; }
+    const el = document.getElementById('perfInfo');
+    const text = this.show
+      ? `${this.fps.toFixed(0)} fps · física ${this.phys.toFixed(1).replace('.', ',')} ms · ${this.calls} dibujos · calidad ${this.NAMES[this.quality]}`
+      : '';
+    if (el.textContent !== text) el.textContent = text;
+  },
+};
+
+/* ==========================================================================
+ * help — ayuda inicial
+ * ========================================================================== */
+
+const help = {
+  el: document.getElementById('help'),
+  init() {
+    document.getElementById('btnHelp').addEventListener('click', () => this.open());
+    document.getElementById('btnHelpClose').addEventListener('click', () => this.close());
+    this.el.addEventListener('beforexrselect', (e) => e.preventDefault());
+  },
+  /** Instrucciones según el dispositivo. */
+  device() {
+    const [dom, other] = hands.dominant === 'right' ? ['derecha', 'izquierda'] : ['izquierda', 'derecha'];
+    if (platform.isQuest) return ['En el visor', [
+      'Pulsa «Entrar en AR».',
+      `Apunta al suelo o a una mesa con la mano ${dom} y pellizca para colocar el robot.`,
+      `Vuelve la palma ${other} hacia ti: el panel aparece sobre ella. Pulsa las fichas con el índice.`,
+      `Pellizca junto al robot con la mano ${dom} para cogerlo. Las dos manos lo empujan.`,
+      `Un pellizco con la mano ${other} sale de la realidad aumentada.`,
+    ]];
+    if (platform.arSupported) return ['En realidad aumentada', [
+      'Pulsa «Entrar en AR» y da permiso a la cámara.',
+      'Mueve el móvil apuntando al suelo o a una mesa hasta ver el anillo amarillo, y toca para colocar el robot.',
+      'El botón «Mover» del panel de fichas permite recolocarlo.',
+    ]];
+    if (platform.isIOS) return ['En iPhone', [
+      'Safari no ofrece realidad aumentada en la web: el robot se ve en modo 3D.',
+      'Arrastra para girar la vista y pellizca para acercarla.',
+    ]];
+    return ['En este navegador', [
+      'No hay realidad aumentada: el robot se ve en modo 3D.',
+      'Arrastra para girar la vista y usa la rueda para acercarla.',
+      'Ábrelo en un móvil Android o en unas Meta Quest para verlo en tu habitación.',
+    ]];
+  },
+  open() {
+    const [title, steps] = this.device();
+    const host = document.getElementById('helpDevice');
+    host.replaceChildren();
+    const h = document.createElement('h3'); h.textContent = title;
+    const ol = document.createElement('ol');
+    for (const step of steps) { const li = document.createElement('li'); li.textContent = step; ol.append(li); }
+    host.append(h, ol);
+    this.el.hidden = false;
+  },
+  close() {
+    this.el.hidden = true;
+    try { localStorage.setItem('kamear.ayuda', '1'); } catch { /* sin almacenamiento */ }
+  },
+  /** La primera vez se abre sola. */
+  first() {
+    let seen = false;
+    try { seen = localStorage.getItem('kamear.ayuda') === '1'; } catch { /* sin almacenamiento */ }
+    if (!seen) this.open();
+  },
+};
+help.init();
+
+/* ==========================================================================
  * ui — panel de la fase 0: servos, posturas y vista previa de marchas
  * ========================================================================== */
 
@@ -2476,6 +2660,7 @@ const ui = {
     };
     option('chkEnv', 'kamear.verEntorno', (on) => environment.setDebug(on));
     option('chkHud', 'kamear.rotulo', (on) => { hud.enabled = on; });
+    option('chkPerf', 'kamear.rendimiento', (on) => { perf.show = on; if (!on) document.getElementById('perfInfo').textContent = ''; });
     const selHand = document.getElementById('selHand');
     try { if (localStorage.getItem('kamear.mano') === 'left') selHand.value = 'left'; } catch { /* sin almacenamiento */ }
     hands.dominant = selHand.value;
@@ -2827,8 +3012,11 @@ renderer.setAnimationLoop((time, frame) => {
   const now = performance.now(), dt = (now - lastFrame) / 1000;
   lastFrame = now;
   if (robot.legs.length) { ui.tick(); program.tick(); }
+  let physMs = 0;
   if (physics.ready) {
+    const t0 = performance.now();
     physics.update(dt);
+    physMs = performance.now() - t0;
     // Si se cae al vacío (por el borde de una mesa sin suelo detectado), vuelve a su sitio
     if (physics.body.translation().y < -4 * PHYS.scale) {
       physics.reset();
@@ -2849,6 +3037,7 @@ renderer.setAnimationLoop((time, frame) => {
   }
   blockPanel.update();
   renderer.render(scene, camera);
+  perf.frame(physMs);
 });
 
 let physicsNote = '';
@@ -2871,7 +3060,10 @@ try {
   } else {
     setStatus('Modo 3D. Este navegador no ofrece AR (WebXR immersive-ar).' + physicsNote);
   }
-  window.kame = { robot, physics, PHYS, applyAngles, kame32, MOTIONS, compileMotion, platform, environment, ar, hud, program, blockPanel, hands }; // para depurar desde la consola
+  perf.init();
+  const params = new URLSearchParams(location.search);
+  if (!params.has('test')) help.first();
+  window.kame = { robot, physics, PHYS, applyAngles, kame32, MOTIONS, compileMotion, platform, environment, ar, hud, program, blockPanel, hands, perf, help }; // para depurar desde la consola
   if (new URLSearchParams(location.search).has('test')) runSelfTest();
   if (new URLSearchParams(location.search).has('env')) environment.demo();
 } catch (e) {

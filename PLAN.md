@@ -240,6 +240,17 @@ Implementado y comprobado en escritorio con manos simuladas (autotest); **falta 
 - **Mano dominante:** se elige en el panel de herramientas (derecha por defecto). El pellizco de la otra mano sale de la AR, salvo mientras muestra el panel en la palma.
 - **Pendiente:** sin respuesta háptica ni sonora al pulsar, y sin mandos para coger o empujar (con mandos solo funciona el rayo).
 
+### Estado de la fase 6
+
+Implementado y comprobado en escritorio; **falta medirlo y probarlo en Quest 3, Android e iPhone**, que es lo que cierra la fase.
+
+- **Medidor de rendimiento:** la casilla «Ver rendimiento» muestra fotogramas por segundo, milisegundos de física, llamadas de dibujo y nivel de calidad; en el visor sale en el rótulo flotante. En escritorio: 60 fps, 1,1 ms de física y 152 llamadas de dibujo.
+- **Calidad adaptativa:** tres niveles. Móviles y visor empiezan en el medio. Si durante 3 segundos no se llega al 75 % del objetivo (72 Hz en el visor, 60 en pantalla), baja un nivel: primero menos resolución y sombras de 1024, después sin sombras y con 8 iteraciones de física.
+- **Otros ahorros:** foveación fija en el visor y un solo dibujo por tornillo con geometrías compartidas.
+- **Ayuda inicial:** se abre sola la primera vez y con el botón «?»; las instrucciones cambian según sea visor, móvil con AR, iPhone o escritorio. En el visor, avisos temporales en el rótulo al entrar y al colocar el robot.
+- **Publicación:** título, descripción, icono y metadatos para compartir; progreso de carga de las piezas; README con enlace, dispositivos, uso y desarrollo.
+- **Pendiente de fases anteriores:** clave del puente de iOS, anclajes, niveles 1 a 3 de las fichas y el corchete de color de «repetir».
+
 ## 11. Riesgos
 
 | Riesgo | Mitigación |
