@@ -1,2 +1,7 @@
 # KameAR
 Robot cuadrípedo en Realidad Aumentada.
+
+Basado en el trabajo de [Javier Isabel Hernandez](https://github.com/JavierIH/kame32)
+
+# License
+This robot is licensed under a [Creative Commons Attribution-ShareAlike 4.0 International License](http://creativecommons.org/licenses/by-sa/4.0/).
