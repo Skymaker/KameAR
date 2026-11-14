@@ -54,6 +54,8 @@
   #status:empty { display: none; }
   #status.error { border-color: #ff6b6b; color: #ffb3b3; border-radius: 12px; }
   #collision { margin: 8px 0 0; font-size: 12px; color: #ff9d9d; min-height: 1.4em; }
+  #envInfo { margin: 0; font-size: 12px; color: var(--muted); }
+  #envInfo:empty { display: none; }
   #credit { margin: 10px 0 0; font-size: 11px; color: var(--muted); }
   #credit a { color: inherit; }
   #panel .head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
@@ -79,7 +81,7 @@
     <div class="head">
       <div class="title">
         <h1>KameAR</h1>
-        <p class="sub">Fase 2 · físicas</p>
+        <p class="sub">Fase 3 · AR y entorno</p>
       </div>
       <button id="btnPanel" aria-expanded="true" aria-label="Ocultar el panel" title="Ocultar el panel">▾</button>
     </div>
@@ -101,6 +103,10 @@
       <summary>Servos</summary>
       <div id="servos"></div>
     </details>
+    <div class="row">
+      <label class="check"><input type="checkbox" id="chkEnv"> Ver entorno detectado</label>
+    </div>
+    <p id="envInfo"></p>
     <p id="collision" role="status"></p>
     <p id="credit">Modelo 3D y marchas: <a href="https://github.com/JavierIH/kame32" target="_blank" rel="noopener">Kame32</a> de JavierIH, licencia CC BY-SA 4.0.</p>
   </div>
@@ -135,6 +141,12 @@ const LEG_SERVO = [2, 3, 6, 7];
 const DEG = Math.PI / 180;
 
 /** Motor de físicas, cargado de forma externa (incluye su WebAssembly). */
+/**
+ * Puente WebXR para iPhone (Safari no trae WebXR). Con una clave de Variant
+ * Launch (launchar.app) la página se abre en su visor y la AR funciona igual
+ * que en Android. Sin clave, el iPhone se queda en modo 3D.
+ */
+const IOS_BRIDGE = { variantLaunchKey: '' };
 const RAPIER_URL = 'https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-compat@0.14.0/rapier.es.js';
 
 /**
@@ -993,6 +1005,10 @@ const physics = {
   body: null,
   /** Por pata: sólidos, articulaciones y datos para medir ángulos y recolocar el pie. */
   legs: [],
+  /** Suelo plano, sólido fijo del entorno y sus piezas (clave → colisionador). */
+  ground: null,
+  envBody: null,
+  env: new Map(),
   /** Ángulos pedidos y ángulos de consigna (limitados por la velocidad del servo). */
   targets: homePose(),
   command: zeroPose(),
@@ -1019,8 +1035,11 @@ const physics = {
 
     // Suelo: plano Y = 0 del sistema de colocación
     const ground = world.createRigidBody(R.RigidBodyDesc.fixed().setTranslation(0, -1, 0));
-    world.createCollider(R.ColliderDesc.cuboid(400, 1, 400)
+    this.ground = world.createCollider(R.ColliderDesc.cuboid(400, 1, 400)
       .setFriction(PHYS.friction.ground).setCollisionGroups(groups(GROUP.env, 0xffff)), ground);
+    // Entorno real: mallas fijas en el sistema de colocación
+    this.envBody = world.createRigidBody(R.RigidBodyDesc.fixed());
+    this.env = new Map();
 
     const dynamic = (pos) => world.createRigidBody(
       R.RigidBodyDesc.dynamic().setTranslation(pos.x, pos.y, pos.z).setCanSleep(false));
@@ -1122,6 +1141,35 @@ const physics = {
     this.command = zeroPose();
     this.time = 0;
   },
+
+  /**
+   * Añade o sustituye una pieza del entorno: malla de triángulos fija, con los
+   * vértices ya en unidades de física y en el sistema de colocación.
+   */
+  setEnv(key, vertices, indices) {
+    this.removeEnv(key);
+    if (indices.length < 3) return;
+    const desc = this.R.ColliderDesc.trimesh(vertices, indices);
+    if (!desc) return;
+    desc.setFriction(PHYS.friction.ground).setCollisionGroups(groups(GROUP.env, 0xffff));
+    this.env.set(key, this.world.createCollider(desc, this.envBody));
+  },
+
+  removeEnv(key) {
+    const collider = this.env.get(key);
+    if (!collider) return;
+    this.world.removeCollider(collider, false);
+    this.env.delete(key);
+  },
+
+  /** Quita todo el entorno y vuelve al suelo plano. */
+  clearEnv() {
+    for (const key of [...this.env.keys()]) this.removeEnv(key);
+    this.setGround(true);
+  },
+
+  /** Activa o desactiva el suelo plano infinito del punto de colocación. */
+  setGround(on) { if (this.ground.isEnabled() !== on) this.ground.setEnabled(on); },
 
   /** Ángulo (rad) que ha girado `child` respecto a `parent` alrededor de `axis`. */
   jointAngle(parent, child, axis) {
@@ -1239,14 +1287,252 @@ const physics = {
 
 const platform = {
   isIOS: /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1),
+  isQuest: /OculusBrowser|Quest/.test(navigator.userAgent),
   arSupported: false,
+  /** Lo que ha concedido la sesión AR en curso. */
+  caps: { domOverlay: false, planes: false, meshes: false, depth: false, hands: false, anchors: false },
+
   async detect() {
+    if (this.isIOS && !navigator.xr && IOS_BRIDGE.variantLaunchKey) await this.loadIOSBridge();
     if (navigator.xr?.isSessionSupported) {
       try { this.arSupported = await navigator.xr.isSessionSupported('immersive-ar'); } catch { this.arSupported = false; }
     }
     return this;
   },
+
+  /** Carga el SDK de Variant Launch: en Safari redirige a su visor, que sí trae WebXR. */
+  loadIOSBridge() {
+    return new Promise((resolve) => {
+      const script = document.createElement('script');
+      script.src = `https://launchar.app/sdk/v1?key=${encodeURIComponent(IOS_BRIDGE.variantLaunchKey)}&redirect=true`;
+      script.onload = resolve; script.onerror = resolve;
+      document.head.append(script);
+    });
+  },
+
+  /** Opciones de la sesión AR: todo lo que no sea el hit-test es opcional. */
+  sessionInit() {
+    const init = {
+      requiredFeatures: ['hit-test'],
+      optionalFeatures: ['dom-overlay', 'local-floor', 'anchors', 'plane-detection', 'mesh-detection', 'hand-tracking'],
+      domOverlay: { root: document.getElementById('overlay') },
+    };
+    // Oclusión por profundidad: solo en el visor, donde Three.js la aplica por sí mismo
+    if (this.isQuest) {
+      init.optionalFeatures.push('depth-sensing');
+      init.depthSensing = { usagePreference: ['gpu-optimized'], dataFormatPreference: [] };
+    }
+    return init;
+  },
+
+  readCaps(session) {
+    const f = session.enabledFeatures ?? [];
+    const has = (name) => f.includes(name);
+    this.caps = {
+      domOverlay: has('dom-overlay') || !!session.domOverlayState,
+      planes: has('plane-detection') || (!session.enabledFeatures && 'detectedPlanes' in XRFrame.prototype),
+      meshes: has('mesh-detection'),
+      depth: has('depth-sensing'),
+      hands: has('hand-tracking'),
+      anchors: has('anchors'),
+    };
+  },
 };
+
+/* ==========================================================================
+ * environment — el entorno real como obstáculos y oclusión
+ *
+ * Cada plano o malla que detecta el dispositivo se convierte en:
+ * - un colisionador fijo en la simulación (el robot choca con él), y
+ * - una malla que solo escribe profundidad (tapa al robot cuando pasa por
+ *   detrás); con «Ver entorno detectado» se dibuja en alambre.
+ * En el suelo no hay oclusión, para que nunca tape los pies del robot.
+ * ========================================================================== */
+
+const environment = {
+  /** Mallas en coordenadas del mundo AR. */
+  group: new THREE.Group(),
+  /** XRPlane | XRMesh | clave de prueba → pieza. */
+  items: new Map(),
+  occluder: new THREE.MeshBasicMaterial({ colorWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 2 }),
+  wire: new THREE.MeshBasicMaterial({ color: 0x35e0ff, wireframe: true, transparent: true, opacity: 0.55, side: THREE.DoubleSide }),
+  debug: false,
+  lastScan: 0,
+  /** Hay que recalcular todos los colisionadores (ha cambiado la colocación). */
+  stale: false,
+
+  /** Crea o actualiza una pieza a partir de sus vértices locales, triángulos y postura en el mundo. */
+  set(key, kind, positions, indices, matrix, floorLike = false) {
+    let item = this.items.get(key);
+    if (!item) {
+      const mesh = new THREE.Mesh(new THREE.BufferGeometry(), this.occluder);
+      mesh.matrixAutoUpdate = false; mesh.renderOrder = -1; mesh.frustumCulled = false;
+      this.group.add(mesh);
+      item = { kind, mesh, floorLike, supports: false, dirty: true };
+      this.items.set(key, item);
+    }
+    if (positions) {
+      item.mesh.geometry.dispose();
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      g.setIndex(new THREE.BufferAttribute(indices, 1));
+      item.mesh.geometry = g;
+      item.dirty = true;
+    }
+    if (matrix) {
+      const e = item.mesh.matrix.elements;
+      let moved = false;
+      for (let k = 0; k < 16; k++) if (Math.abs(e[k] - matrix[k]) > 0.002) { moved = true; break; }
+      if (moved) { item.mesh.matrix.fromArray(matrix); item.mesh.matrixWorldNeedsUpdate = true; item.dirty = true; }
+    }
+    item.floorLike = floorLike;
+    this.style(item);
+    return item;
+  },
+
+  style(item) {
+    item.mesh.material = this.debug ? this.wire : this.occluder;
+    // Sin oclusión en superficies horizontales (suelo, mesas) ni en mallas: ahí
+    // un pequeño error de altura taparía los pies. Las mallas se ocluyen por profundidad.
+    item.mesh.visible = this.debug || (item.kind === 'plane' && !item.floorLike);
+  },
+
+  setDebug(on) {
+    this.debug = on;
+    for (const item of this.items.values()) this.style(item);
+  },
+
+  remove(key) {
+    const item = this.items.get(key);
+    if (!item) return;
+    this.group.remove(item.mesh); item.mesh.geometry.dispose();
+    if (physics.ready) physics.removeEnv(key);
+    this.items.delete(key);
+  },
+
+  clear() {
+    for (const key of [...this.items.keys()]) this.remove(key);
+    if (physics.ready) physics.clearEnv();
+    this.info();
+  },
+
+  /** Lee los planos y mallas del fotograma AR (unas dos veces por segundo). */
+  scan(frame) {
+    const now = performance.now();
+    if (now - this.lastScan < 400) return;
+    this.lastScan = now;
+    const ref = renderer.xr.getReferenceSpace();
+    const seen = new Set();
+    for (const plane of frame.detectedPlanes ?? []) {
+      const pose = frame.getPose(plane.planeSpace, ref);
+      if (!pose) continue;
+      seen.add(plane);
+      const known = this.items.get(plane);
+      const changed = !known || known.time !== plane.lastChangedTime;
+      const shape = changed ? this.planeGeometry(plane.polygon) : null;
+      if (changed && !shape) continue;
+      const item = this.set(plane, 'plane', shape?.positions, shape?.indices, pose.transform.matrix, plane.orientation !== 'vertical');
+      item.time = plane.lastChangedTime;
+    }
+    for (const xrMesh of frame.detectedMeshes ?? []) {
+      const pose = frame.getPose(xrMesh.meshSpace, ref);
+      if (!pose) continue;
+      seen.add(xrMesh);
+      const known = this.items.get(xrMesh);
+      const changed = !known || known.time !== xrMesh.lastChangedTime;
+      const item = this.set(xrMesh, 'mesh', changed ? new Float32Array(xrMesh.vertices) : null,
+        changed ? new Uint32Array(xrMesh.indices) : null, pose.transform.matrix);
+      item.time = xrMesh.lastChangedTime;
+    }
+    for (const key of [...this.items.keys()]) if (typeof key === 'object' && !seen.has(key)) this.remove(key);
+    this.sync();
+  },
+
+  /** Triangula el contorno de un plano (puntos en su propio sistema, sobre Y = 0). */
+  planeGeometry(polygon) {
+    const contour = [];
+    for (const pt of polygon) contour.push(new THREE.Vector2(pt.x, pt.z));
+    if (contour.length > 1 && contour[0].equals(contour[contour.length - 1])) contour.pop();
+    if (contour.length < 3) return null;
+    const faces = THREE.ShapeUtils.triangulateShape(contour, []);
+    if (!faces.length) return null;
+    const positions = new Float32Array(contour.length * 3);
+    contour.forEach((c, k) => { positions[k * 3] = c.x; positions[k * 3 + 2] = c.y; });
+    return { positions, indices: new Uint32Array(faces.flat()) };
+  },
+
+  /**
+   * Lleva a la simulación las piezas que han cambiado, en el sistema de
+   * colocación del robot, y decide si hace falta el suelo plano.
+   */
+  sync() {
+    if (!physics.ready) return;
+    const S = PHYS.scale;
+    placement.updateMatrixWorld();
+    const toPlacement = new THREE.Matrix4().copy(placement.matrixWorld).invert();
+    for (const [key, item] of this.items) {
+      if (!item.dirty && !this.stale) continue;
+      item.dirty = false;
+      _m1.multiplyMatrices(toPlacement, item.mesh.matrix);
+      const src = item.mesh.geometry.attributes.position.array, idx = item.mesh.geometry.index.array;
+      const out = new Float32Array(src.length);
+      for (let k = 0; k < src.length; k += 3) {
+        _p.set(src[k], src[k + 1], src[k + 2]).applyMatrix4(_m1);
+        out[k] = _p.x * S; out[k + 1] = _p.y * S; out[k + 2] = _p.z * S;
+      }
+      item.supports = this.coversOrigin(out, idx);
+      try { physics.setEnv(key, out, idx); } catch (e) { console.warn('Entorno: pieza descartada', e); }
+    }
+    this.stale = false;
+    // Con malla del entorno, el robot se apoya en ella (y puede caerse de una mesa).
+    // Solo con planos, se conserva el suelo plano: los planos del móvil tienen huecos.
+    let supported = false, meshes = false;
+    for (const item of this.items.values()) { supported ||= item.supports; meshes ||= item.kind !== 'plane'; }
+    physics.setGround(!(meshes && supported));
+    this.info();
+  },
+
+  /** ¿Hay un triángulo bajo el punto de colocación, a menos de 10 cm de altura? */
+  coversOrigin(v, idx) {
+    for (let k = 0; k < idx.length; k += 3) {
+      const a = idx[k] * 3, b = idx[k + 1] * 3, c = idx[k + 2] * 3;
+      const d = (v[b + 2] - v[c + 2]) * (v[a] - v[c]) + (v[c] - v[b]) * (v[a + 2] - v[c + 2]);
+      if (Math.abs(d) < 1e-9) continue;
+      const u = ((v[b + 2] - v[c + 2]) * -v[c] + (v[c] - v[b]) * -v[c + 2]) / d;
+      const w = ((v[c + 2] - v[a + 2]) * -v[c] + (v[a] - v[c]) * -v[c + 2]) / d;
+      if (u < 0 || w < 0 || u + w > 1) continue;
+      const y = u * v[a + 1] + w * v[b + 1] + (1 - u - w) * v[c + 1];
+      if (Math.abs(y) < 1) return true;
+    }
+    return false;
+  },
+
+  info() {
+    const el = document.getElementById('envInfo');
+    if (!ar.session && !this.items.size) { el.textContent = ''; return; }
+    let planes = 0, meshes = 0;
+    for (const item of this.items.values()) if (item.kind === 'plane') planes++; else meshes++;
+    const c = platform.caps, yes = (v) => (v ? 'sí' : 'no');
+    el.textContent = ar.session
+      ? `Entorno: ${planes} planos (${yes(c.planes)}) · ${meshes} mallas (${yes(c.meshes)}) · oclusión por profundidad: ${yes(c.depth)}`
+      : `Entorno de prueba: ${planes + meshes} piezas`;
+  },
+
+  /** Entorno simulado para probar sin dispositivo (?env): un muro delante y un escalón al lado. */
+  demo() {
+    const box = (key, w, h, d, x, y, z) => {
+      const g = new THREE.BoxGeometry(w, h, d);
+      this.set(key, 'mesh', new Float32Array(g.attributes.position.array), new Uint32Array(g.index.array),
+        new THREE.Matrix4().makeTranslation(x, y, z).elements);
+    };
+    box('muro', 0.5, 0.08, 0.02, 0, 0.04, 0.3);
+    box('escalón', 0.2, 0.01, 0.2, 0.25, 0.005, 0);
+    this.setDebug(true);
+    document.getElementById('chkEnv').checked = true;
+    this.sync();
+  },
+};
+scene.add(environment.group);
 
 const ar = {
   session: null,
@@ -1262,13 +1548,11 @@ const ar = {
   })(),
 
   async start() {
-    const session = await navigator.xr.requestSession('immersive-ar', {
-      requiredFeatures: ['hit-test'],
-      optionalFeatures: ['dom-overlay', 'local-floor', 'anchors', 'plane-detection', 'hand-tracking'],
-      domOverlay: { root: document.getElementById('overlay') },
-    });
+    const session = await navigator.xr.requestSession('immersive-ar', platform.sessionInit());
     this.session = session;
     this.placed = false;
+    platform.readCaps(session);
+    environment.clear();
     scene.background = null;
     floor.visible = false;
     placement.visible = false;
@@ -1280,6 +1564,7 @@ const ar = {
     session.addEventListener('end', () => this.end());
     setStatus('Apunta al suelo o a una mesa y toca para colocar el robot.');
     ui.btnAR.textContent = 'Salir de AR';
+    environment.info();
   },
 
   place() {
@@ -1291,7 +1576,12 @@ const ar = {
     placement.visible = true;
     if (physics.ready) physics.reset();
     this.placed = true;
+    // El entorno se expresa respecto al punto de colocación: hay que recalcularlo
+    environment.stale = true;
+    environment.sync();
     setStatus('');
+    // Sin panel sobre la imagen (visor): el robot echa a andar para poder probar el entorno
+    if (!platform.caps.domOverlay) ui.play(MOTIONS[0]);
   },
 
   update(frame) {
@@ -1300,12 +1590,14 @@ const ar = {
     const pose = hits.length ? hits[0].getPose(renderer.xr.getReferenceSpace()) : null;
     this.reticle.visible = !!pose;
     if (pose) this.reticle.matrix.fromArray(pose.transform.matrix);
+    environment.scan(frame);
   },
 
   end() {
     this.session = null;
     this.hitTestSource = null;
     this.reticle.visible = false;
+    environment.clear();
     scene.background = BG;
     floor.visible = true;
     arShadow.visible = false;
@@ -1366,6 +1658,7 @@ const ui = {
     document.getElementById('btnHome').addEventListener('click', () => { this.stopGait(); applyAngles(homePose()); });
     document.getElementById('btnReset').addEventListener('click', () => { if (physics.ready) physics.reset(); });
     document.getElementById('btnDrop').addEventListener('click', () => { if (physics.ready) physics.reset(0.3); });
+    document.getElementById('chkEnv').addEventListener('change', (e) => environment.setDebug(e.target.checked));
     document.getElementById('btnZero').addEventListener('click', () => { this.stopGait(); applyAngles(zeroPose()); });
     this.btnAR.addEventListener('click', async () => {
       if (ar.session) { ar.session.end(); return; }
@@ -1564,6 +1857,23 @@ function runSelfTest() {
     settle();
     pose = play(kame32.jump());
     check('físicas: jump salta hacia delante y cae de pie', pose.up > 0.99 && pose.z > 0.01, `avance ${(pose.z * 1000).toFixed(0)} mm`);
+    // Entorno: un muro de malla delante detiene al robot; sin suelo plano, un plano lo sostiene
+    const quad = (x0, x1, y0, y1, z0, z1) => new Float32Array([x0, y0, z0, x1, y0, z1, x1, y1, z1, x0, y1, z0]);
+    const quadIdx = new Uint32Array([0, 1, 2, 0, 2, 3]);
+    physics.setEnv('muro', quad(-3, 3, 0, 1, 2, 2), quadIdx);       // muro vertical a 20 cm
+    settle();
+    pose = play(kame32.walk(10, 500));
+    check('entorno: un muro a 20 cm detiene el avance', pose.z > 0.03 && pose.z < 0.2 && pose.up > 0.9, `avance ${(pose.z * 1000).toFixed(0)} mm`);
+    physics.removeEnv('muro');
+    physics.setEnv('mesa', new Float32Array([-3, 0, -3, 3, 0, -3, 3, 0, 3, -3, 0, 3]), quadIdx); // tablero de 60 cm
+    physics.setGround(false);
+    settle();
+    pose = physics.pose();
+    check('entorno: sin suelo plano, la malla sostiene al robot', pose.up > 0.99 && pose.y > 0.03, `altura ${(pose.y * 1000).toFixed(0)} mm`);
+    check('entorno: el punto de colocación está cubierto', environment.coversOrigin(new Float32Array([-3, 0, -3, 3, 0, -3, 3, 0, 3, -3, 0, 3]), quadIdx)
+      && !environment.coversOrigin(quad(-3, 3, 0, 1, 2, 2), quadIdx));
+    physics.clearEnv();
+    check('entorno: al quitarlo vuelve el suelo plano', physics.ground.isEnabled() && physics.env.size === 0);
     physics.reset(0.3);
     physics.simulate(2, () => home);
     pose = physics.pose();
@@ -1604,7 +1914,14 @@ renderer.setAnimationLoop((time, frame) => {
   const now = performance.now(), dt = (now - lastFrame) / 1000;
   lastFrame = now;
   if (robot.legs.length) ui.tick();
-  if (physics.ready) physics.update(dt);
+  if (physics.ready) {
+    physics.update(dt);
+    // Si se cae al vacío (por el borde de una mesa sin suelo detectado), vuelve a su sitio
+    if (physics.body.translation().y < -1.5 * PHYS.scale) {
+      physics.reset();
+      setStatus('El robot se ha caído fuera del entorno detectado; vuelve al punto de colocación.');
+    }
+  }
   if (frame && ar.session) ar.update(frame);
   else {
     // La cámara y la luz siguen al robot
@@ -1636,12 +1953,13 @@ try {
     ui.btnAR.disabled = false;
     setStatus('');
   } else if (platform.isIOS) {
-    setStatus('Modo 3D. La AR en iPhone necesita el puente WebXR (pendiente de configurar).' + physicsNote);
+    setStatus('Modo 3D. La AR en iPhone necesita el puente WebXR (falta su clave en IOS_BRIDGE).' + physicsNote);
   } else {
     setStatus('Modo 3D. Este navegador no ofrece AR (WebXR immersive-ar).' + physicsNote);
   }
-  window.kame = { robot, physics, PHYS, applyAngles, kame32, MOTIONS, compileMotion, platform }; // para depurar desde la consola
+  window.kame = { robot, physics, PHYS, applyAngles, kame32, MOTIONS, compileMotion, platform, environment, ar }; // para depurar desde la consola
   if (new URLSearchParams(location.search).has('test')) runSelfTest();
+  if (new URLSearchParams(location.search).has('env')) environment.demo();
 } catch (e) {
   console.error(e);
   setStatus(`${e.message} Comprueba la conexión y recarga la página.`, true);

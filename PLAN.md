@@ -198,6 +198,18 @@ Solo si no se cumplen los criterios: cuerpo rígido con velocidad calibrada por 
 | 5 | Manos en Quest: panel en la palma, coger y empujar | Se programa y manipula el robot solo con las manos |
 | 6 | Rendimiento, ayuda inicial y publicación | Probado en Quest 3, Android e iPhone |
 
+### Estado de la fase 3
+
+Implementado y comprobado en escritorio (autotest y entorno simulado con `?env`); **falta probarlo en los dispositivos**.
+
+- **Capacidades:** la sesión pide como opcionales planos, malla, anclajes, manos y panel sobre la imagen; en el visor, también profundidad. El panel muestra qué ha concedido el dispositivo.
+- **Colisiones con el entorno:** cada plano o malla detectado se añade a la simulación como malla fija, y se actualiza unas dos veces por segundo.
+- **Suelo:** solo con planos (móviles) se conserva el suelo plano del punto de colocación, porque los planos tienen huecos. Con malla (Quest) el robot se apoya en ella y puede caerse de una mesa; si cae al vacío vuelve al punto de colocación.
+- **Oclusión:** las paredes y planos verticales tapan al robot; el suelo y las mesas no, para que un error de altura no le tape los pies. En el visor la oclusión general es por profundidad.
+- **Visor sin panel:** al colocar el robot echa a andar solo, para poder probar el entorno hasta que llegue el panel de la palma (fase 5).
+- **iOS:** el puente queda preparado (`IOS_BRIDGE.variantLaunchKey` en `index.html`); sin clave de Variant Launch el iPhone sigue en modo 3D.
+- **Pendiente:** anclajes (el robot no se reancla si el seguimiento deriva) y medir el rendimiento en Quest con la malla de la habitación.
+
 ## 11. Riesgos
 
 | Riesgo | Mitigación |
