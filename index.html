@@ -56,7 +56,11 @@
   #collision { margin: 8px 0 0; font-size: 12px; color: #ff9d9d; min-height: 1.4em; }
   #credit { margin: 10px 0 0; font-size: 11px; color: var(--muted); }
   #credit a { color: inherit; }
-  @media (max-width: 520px) { #panel.collapsed .servos { display: none; } }
+  #panel .head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+  #btnPanel { padding: 4px 10px; line-height: 1.2; }
+  /* Panel oculto: solo queda el botón para volver a mostrarlo */
+  #panel.hidden { width: auto; padding: 6px; }
+  #panel.hidden > :not(.head), #panel.hidden .title { display: none; }
 </style>
 <script type="importmap">
 {
@@ -72,8 +76,13 @@
 <div id="overlay">
   <div id="status">Cargando el modelo…</div>
   <div id="panel">
-    <h1>KameAR</h1>
-    <p class="sub">Fase 2 · físicas</p>
+    <div class="head">
+      <div class="title">
+        <h1>KameAR</h1>
+        <p class="sub">Fase 2 · físicas</p>
+      </div>
+      <button id="btnPanel" aria-expanded="true" aria-label="Ocultar el panel" title="Ocultar el panel">▾</button>
+    </div>
     <div class="row">
       <button id="btnAR" class="primary" disabled>Entrar en AR</button>
       <button id="btnHome">Home</button>
@@ -1172,7 +1181,17 @@ const ui = {
       try { await ar.start(); } catch (e) { setStatus(`No se pudo iniciar la AR: ${e.message}`, true); }
     });
     // Los toques en el panel no deben colocar el robot
-    document.getElementById('panel').addEventListener('beforexrselect', (e) => e.preventDefault());
+    const panel = document.getElementById('panel'), btnPanel = document.getElementById('btnPanel');
+    panel.addEventListener('beforexrselect', (e) => e.preventDefault());
+    // Ocultar o mostrar el panel para dejar la pantalla libre
+    btnPanel.addEventListener('click', () => {
+      const hidden = panel.classList.toggle('hidden');
+      const label = hidden ? 'Mostrar el panel' : 'Ocultar el panel';
+      btnPanel.textContent = hidden ? '☰ Panel' : '▾';
+      btnPanel.title = label;
+      btnPanel.setAttribute('aria-label', label);
+      btnPanel.setAttribute('aria-expanded', String(!hidden));
+    });
   },
 
   /** Empieza un movimiento desde la postura actual. */
