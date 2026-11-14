@@ -1534,8 +1534,50 @@ const environment = {
 };
 scene.add(environment.group);
 
+/**
+ * Rótulo flotante para el visor, donde no hay panel sobre la imagen: muestra el
+ * mensaje de estado y el recuento del entorno delante del usuario.
+ */
+const hud = {
+  canvas: Object.assign(document.createElement('canvas'), { width: 1024, height: 192 }),
+  text: null,
+  mesh: null,
+  init() {
+    const map = new THREE.CanvasTexture(this.canvas);
+    map.colorSpace = THREE.SRGBColorSpace;
+    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.48, 0.09),
+      new THREE.MeshBasicMaterial({ map, transparent: true, depthTest: false }));
+    this.mesh.renderOrder = 10; this.mesh.visible = false; this.mesh.frustumCulled = false;
+    scene.add(this.mesh);
+  },
+  /** Coloca el rótulo delante de la cámara, algo por debajo de la vista, y lo redibuja si cambia el texto. */
+  update() {
+    const lines = [document.getElementById('status').textContent, document.getElementById('envInfo').textContent].filter(Boolean);
+    const text = lines.join('\n');
+    this.mesh.visible = !!text;
+    if (!text) return;
+    if (text !== this.text) {
+      this.text = text;
+      const c = this.canvas.getContext('2d'), w = this.canvas.width, h = this.canvas.height;
+      c.clearRect(0, 0, w, h);
+      c.fillStyle = 'rgba(16,20,26,0.82)'; c.beginPath(); c.roundRect(0, 0, w, h, 28); c.fill();
+      c.fillStyle = '#f1f4f8'; c.font = '42px system-ui, sans-serif'; c.textBaseline = 'middle';
+      lines.forEach((line, k) => c.fillText(line, 28, h * (k + 0.5) / lines.length, w - 56));
+      this.mesh.material.map.needsUpdate = true;
+    }
+    const cam = renderer.xr.getCamera();
+    cam.getWorldPosition(_p); cam.getWorldQuaternion(_qa);
+    this.mesh.position.copy(_q.set(0, -0.2, -0.75).applyQuaternion(_qa)).add(_p);
+    this.mesh.quaternion.copy(_qa);
+  },
+};
+hud.init();
+
 const ar = {
   session: null,
+  /** Instante de inicio de la sesión y si ya se ha pedido configurar el espacio. */
+  startedAt: 0,
+  roomCaptureAsked: false,
   hitTestSource: null,
   placed: false,
   reticle: (() => {
@@ -1551,7 +1593,14 @@ const ar = {
     const session = await navigator.xr.requestSession('immersive-ar', platform.sessionInit());
     this.session = session;
     this.placed = false;
+    this.startedAt = performance.now();
+    this.roomCaptureAsked = false;
     platform.readCaps(session);
+    // Sin panel sobre la imagen (visor) no hay casilla que marcar: el entorno se dibuja siempre
+    if (!platform.caps.domOverlay) {
+      environment.setDebug(true);
+      document.getElementById('chkEnv').checked = true;
+    }
     environment.clear();
     scene.background = null;
     floor.visible = false;
@@ -1591,12 +1640,20 @@ const ar = {
     this.reticle.visible = !!pose;
     if (pose) this.reticle.matrix.fromArray(pose.transform.matrix);
     environment.scan(frame);
+    // Visor sin habitación configurada: tras unos segundos sin entorno, se pide configurarla
+    if (!this.roomCaptureAsked && !environment.items.size && this.session.initiateRoomCapture
+        && (platform.caps.planes || platform.caps.meshes) && performance.now() - this.startedAt > 5000) {
+      this.roomCaptureAsked = true;
+      this.session.initiateRoomCapture().catch((e) => console.warn('Configuración del espacio:', e));
+    }
+    if (!platform.caps.domOverlay) hud.update();
   },
 
   end() {
     this.session = null;
     this.hitTestSource = null;
     this.reticle.visible = false;
+    hud.mesh.visible = false;
     environment.clear();
     scene.background = BG;
     floor.visible = true;
@@ -1957,7 +2014,7 @@ try {
   } else {
     setStatus('Modo 3D. Este navegador no ofrece AR (WebXR immersive-ar).' + physicsNote);
   }
-  window.kame = { robot, physics, PHYS, applyAngles, kame32, MOTIONS, compileMotion, platform, environment, ar }; // para depurar desde la consola
+  window.kame = { robot, physics, PHYS, applyAngles, kame32, MOTIONS, compileMotion, platform, environment, ar, hud }; // para depurar desde la consola
   if (new URLSearchParams(location.search).has('test')) runSelfTest();
   if (new URLSearchParams(location.search).has('env')) environment.demo();
 } catch (e) {
