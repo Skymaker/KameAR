@@ -169,16 +169,16 @@ Las piezas del robot se tratan como sólidos: no pueden atravesarse.
 
 ### Resultado de la fase 2 (medido en escritorio)
 
-Implementado con Rapier: 9 sólidos (cuerpo y, por pata, soporte y pata con su pie), 8 articulaciones motorizadas, paso de 1/240 s. Los colisionadores son envolventes convexas simplificadas (40 vértices), lo que da unas 20 veces el tiempo real en escritorio.
+Implementado con Rapier: 13 sólidos (cuerpo y, por pata, soporte, pata y pie), 8 articulaciones motorizadas y, por pata, un paralelogramo real (rótula pata–pie y giro del pie bloqueado respecto al soporte), paso de 1/240 s. Los colisionadores son envolventes convexas simplificadas (40 vértices), lo que da unas 17 veces el tiempo real en escritorio.
 
 | Criterio | Resultado |
 |---|---|
 | 1. `walk` recto | Cumplido: 586 mm en 10 ciclos, desvío de 2° |
-| 2. Giros, `hello` y `jump` | Giros y `hello` cumplidos (`turnL` gira 169° en 4 ciclos). **`jump` no:** el robot da una voltereta hacia atrás y queda boca arriba |
+| 2. Giros, `hello` y `jump` | Cumplido: `turnL` gira 163° en 4 ciclos y `jump` avanza unos 37 mm y cae de pie |
 | 3. Caída desde 30 cm | Cumplido: aterriza de pie |
 | 4. 72 fps en Quest 3 | Sin medir (60 fps en escritorio) |
 
-Sobre `jump`: en la postura «sentado» del firmware el robot se apoya en la parte trasera del cuerpo con las patas traseras recogidas bajo él; al impulsarse, esas patas hacen palanca y lo voltean. Ocurre con cualquier fricción, centro de masas o velocidad de servo razonables. Falta contrastarlo con el robot real para saber si es fiel o un defecto del modelo.
+Sobre `jump`: la primera versión volcaba hacia atrás por un defecto del modelo (el pie iba pegado a la pata y se recolocaba a mano en cada paso, lo que falseaba la palanca). Con el paralelogramo real el resultado depende del centro de masas del cuerpo: centrado y alto queda al límite del vuelco; con el valor adoptado, 10 mm adelantado y 8 mm de alto, cae de pie con margen (comprobado con 8–32 iteraciones, paso de 1/480 s, fricción 0,4–1,2 y par de 1,3 kg·cm). Ese centro de masas es una estimación: conviene medirlo en el robot real.
 
 Parámetros elegidos sin medir en un robot real: masas (cuerpo 150 g, soporte con servo 20 g, pata 8 g, pie 7 g), fricción de los pies (0,9) y rigidez del servo. El par (1,8 kg·cm) y la velocidad (0,1 s/60°) son los de un SG90.
 

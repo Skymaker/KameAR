@@ -110,6 +110,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { MeshBVH } from 'three-mesh-bvh';
 
 /* ==========================================================================
@@ -119,7 +120,7 @@ import { MeshBVH } from 'three-mesh-bvh';
 /** Piezas STL del repositorio original, con el commit fijado. */
 const STL_BASE = 'https://cdn.jsdelivr.net/gh/JavierIH/kame32@8f33e489f7425747ab62aeb509777a06d2f14f3e/3d/stl/';
 
-const COLORS = { body: 0x1b1b1d, yellow: 0xd8f000, black: 0x1b1b1d, servo: 0x2f7fe6, horn: 0xf2f2f2 };
+const COLORS = { body: 0x161618, yellow: 0xdff214, black: 0x161618, servo: 0x2a78e0, horn: 0xf4f4f0, screw: 0xa9afb6 };
 
 /** Orden de los servos del firmware (kame.cpp). */
 const SERVO_NAMES = [
@@ -353,6 +354,22 @@ function mirrorX(geometry) {
  * Sistema local en mm: el eje de salida es +Z y pasa por el origen, la cara
  * inferior de las aletas de fijación está en Z = 0 y el cuerpo se alarga hacia +Y.
  */
+let _servoLabel = null;
+function servoLabel() {
+  if (!_servoLabel) {
+    const map = canvasTexture(256, 166, (c, w, h) => {
+      c.fillStyle = '#eef3fb'; c.fillRect(0, 0, w, h);
+      c.fillStyle = '#1756b8'; c.fillRect(0, 0, w, 44);
+      c.fillStyle = '#ffffff'; c.font = 'bold 28px sans-serif'; c.fillText('Micro Servo', 14, 32);
+      c.fillStyle = '#1756b8'; c.font = 'bold 64px sans-serif'; c.fillText('SG90', 14, 112);
+      c.font = 'bold 30px sans-serif'; c.fillText('9 g', 190, 112);
+      c.fillStyle = '#44506a'; c.font = '20px sans-serif'; c.fillText('4.8 V · 1.8 kg·cm', 14, 148);
+    });
+    _servoLabel = new THREE.MeshStandardMaterial({ map, roughness: 0.55 });
+  }
+  return _servoLabel;
+}
+
 function servoModel(materials) {
   const g = new THREE.Group();
   const add = (geometry, material, x, y, z) => {
@@ -366,21 +383,89 @@ function servoModel(materials) {
   add(cyl(5.9, 4), materials.servo, 0, 0, 8.8);                                  // caja reductora
   add(cyl(2.8, 4), materials.servo, 0, 6, 8.8);
   add(cyl(2.3, 3.2), materials.horn, 0, 0, 12.4);                                // eje de salida
+  // Etiqueta en los dos costados
+  for (const sx of [1, -1]) {
+    const tag = new THREE.Mesh(new THREE.PlaneGeometry(17, 11), servoLabel());
+    tag.rotation.set(0, sx * Math.PI / 2, sx * Math.PI / 2);
+    tag.position.set(sx * 6.16, 5.25, -6);
+    g.add(tag);
+  }
   return g;
 }
 
-/** Brazo del servo (pieza blanca), en el plano XZ, con el eje en el origen y a lo largo de `dir`. */
-function hornModel(materials, dir) {
+/**
+ * Brazo del servo (pieza blanca de un solo brazo, con sus agujeros).
+ * Sistema local en mm: eje del servo en el origen, brazo hacia +X, cara de
+ * apoyo en Z = 0 y grosor hacia +Z. Medidas tomadas de los huecos de los STL.
+ */
+const HORN = { hub: 3.6, tip: 2.3, length: 16.2, thickness: 1.8 };
+let _hornGeometry = null, _hubGeometry = null;
+function hornModel(materials) {
+  if (!_hornGeometry) {
+    const { hub: R, tip: r, length: d, thickness } = HORN;
+    const phi = Math.acos((R - r) / d); // ángulo de los puntos de tangencia
+    const shape = new THREE.Shape();
+    shape.absarc(0, 0, R, phi, 2 * Math.PI - phi, false);
+    shape.absarc(d, 0, r, -phi, phi, false);
+    shape.closePath();
+    const hole = (x, radius) => { const h = new THREE.Path(); h.absarc(x, 0, radius, 0, 2 * Math.PI, true); shape.holes.push(h); };
+    hole(0, 1.2);
+    for (let k = 0; k < 5; k++) hole(6 + k * 2.2, 0.55);
+    _hornGeometry = new THREE.ExtrudeGeometry(shape, { depth: thickness, bevelEnabled: false, curveSegments: 20 });
+    _hubGeometry = new THREE.CylinderGeometry(R, R, 4, 24, 1, true).rotateX(Math.PI / 2);
+  }
   const g = new THREE.Group();
-  const hub = new THREE.Mesh(new THREE.CylinderGeometry(3.5, 3.5, 2.5, 24), materials.horn);
-  const arm = new THREE.Mesh(new THREE.BoxGeometry(17, 1.6, 5), materials.horn);
-  arm.position.x = 8;
-  const tip = new THREE.Mesh(new THREE.CylinderGeometry(2.5, 2.5, 1.6, 16), materials.horn);
-  tip.position.x = 16.5;
-  g.add(hub, arm, tip);
-  g.rotation.y = -Math.atan2(dir.z, dir.x);
-  g.traverse((o) => { o.castShadow = true; });
+  g.add(new THREE.Mesh(_hornGeometry, materials.horn), new THREE.Mesh(_hubGeometry, materials.horn));
+  g.traverse((o) => { o.castShadow = true; o.receiveShadow = true; });
   return g;
+}
+
+/**
+ * Tornillo esquemático. Sistema local en mm: la cabeza apoya en el origen y
+ * sobresale hacia +Z; la caña entra hacia -Z.
+ */
+function screwModel(material, length, r = 1.4, headR = 2.7, headH = 1.6) {
+  const g = new THREE.Group();
+  const head = new THREE.Mesh(new THREE.CylinderGeometry(headR, headR, headH, 20).rotateX(Math.PI / 2), material);
+  head.position.z = headH / 2;
+  const shank = new THREE.Mesh(new THREE.CylinderGeometry(r, r, length, 14).rotateX(Math.PI / 2), material);
+  shank.position.z = -length / 2;
+  g.add(head, shank);
+  return g;
+}
+
+/** Lienzo auxiliar para las texturas dibujadas. */
+function canvasTexture(w, h, draw) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  draw(c.getContext('2d'), w, h);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
+  return t;
+}
+
+/**
+ * Plástico impreso en 3D: color liso con el relieve de las capas de impresión.
+ * `axis` es la dirección de apilado de las capas en el sistema de la pieza.
+ * El relieve se calcula en el sombreador y se desvanece con la distancia.
+ */
+function printedPlastic(color, axis, roughness = 0.48) {
+  const material = new THREE.MeshStandardMaterial({ color, roughness, metalness: 0 });
+  const layerAxis = new THREE.Vector3(...axis);
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.layerAxis = { value: layerAxis };
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nuniform vec3 layerAxis;\nvarying float vLayer;\nvarying vec3 vLayerAxis;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvLayer = dot(position, layerAxis);\nvLayerAxis = normalize(normalMatrix * layerAxis);');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying float vLayer;\nvarying vec3 vLayerAxis;')
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+        {
+          float phase = vLayer * 6.2831853 / 0.3;                     // capas de 0,3 mm
+          float fade = 1.0 - smoothstep(1.2, 3.0, fwidth(phase));     // sin muaré de lejos
+          normal = normalize(normal + vLayerAxis * (0.3 * cos(phase) * fade));
+        }`);
+  };
+  return material;
 }
 
 const _m1 = new THREE.Matrix4(), _m2 = new THREE.Matrix4(), _line = new THREE.Line3();
@@ -413,9 +498,9 @@ class KameRobot {
   }
 
   async load() {
-    const [box, cover, bracket, leg, link, foot] = await Promise.all([
+    const [box, cover, bracket, leg, link, foot, bushing] = await Promise.all([
       'body-box.stl', 'body-cover.stl', 'bracket-left-sg90.stl',
-      'leg-left-sg90.stl', 'leg-link.stl', 'foot.stl',
+      'leg-left-sg90.stl', 'leg-link.stl', 'foot.stl', 'bushing.stl',
     ].map(loadSTL));
 
     // Cada STL viene en su propio sistema; aquí se llevan todos al del ensamblaje,
@@ -428,16 +513,24 @@ class KameRobot {
     // La bieleta es acodada: se gira 180° en su plano para que el codo libre el soporte
     link.applyMatrix4(m.makeRotationY(Math.PI)).translate(160, 0, 50);
     foot.applyMatrix4(m.makeRotationY(-Math.PI / 2));
-    for (const g of [box, cover, bracket, leg, link, foot]) g.computeVertexNormals();
+    for (const g of [box, cover, bracket, leg, link, foot, bushing]) g.computeVertexNormals();
 
     const left = { bracket, leg, link, foot };
     const right = { bracket: mirrorX(bracket), leg: mirrorX(leg), link: mirrorX(link), foot: mirrorX(foot) };
 
-    const mat = (color) => new THREE.MeshStandardMaterial({ color, roughness: 0.65, metalness: 0.05 });
+    // Materiales. Cada pieza impresa lleva las capas en la dirección en que se imprimió
+    // (el eje Z de su STL), expresada aquí en el sistema del ensamblaje.
     this.materials = {
-      body: mat(COLORS.body), yellow: mat(COLORS.yellow), black: mat(COLORS.black),
-      servo: new THREE.MeshStandardMaterial({ color: COLORS.servo, roughness: 0.35, transparent: true, opacity: 0.9 }),
-      horn: mat(COLORS.horn),
+      body: printedPlastic(COLORS.body, [0, 0, 1]),
+      bracket: printedPlastic(COLORS.yellow, [0, 1, 0]),
+      leg: printedPlastic(COLORS.black, [0, 0, 1]),
+      link: printedPlastic(COLORS.black, [0, 1, 0]),
+      foot: printedPlastic(COLORS.yellow, [1, 0, 0]),
+      bushingTop: printedPlastic(COLORS.yellow, [0, 0, 1]),
+      bushingLeg: printedPlastic(COLORS.black, [0, 1, 0]),
+      servo: new THREE.MeshPhysicalMaterial({ color: COLORS.servo, roughness: 0.18, transparent: true, opacity: 0.86, clearcoat: 0.6 }),
+      horn: new THREE.MeshStandardMaterial({ color: COLORS.horn, roughness: 0.42 }),
+      screw: new THREE.MeshStandardMaterial({ color: COLORS.screw, roughness: 0.3, metalness: 0.7, transparent: true, opacity: 0.6 }),
     };
     const mesh = (geometry, material) => {
       const o = new THREE.Mesh(geometry, material);
@@ -449,6 +542,18 @@ class KameRobot {
     const boxMesh = mesh(box, this.materials.body), coverMesh = mesh(cover, this.materials.body);
     this.asm.add(boxMesh, coverMesh);
     this.#addEyes();
+    this.#addModule(cover);
+    const X = new THREE.Vector3(1, 0, 0), Yv = new THREE.Vector3(0, 1, 0), Zv = new THREE.Vector3(0, 0, 1);
+    /** Coloca un tornillo con la cabeza en (x, y, z) mirando hacia `out`; `o` es el origen del grupo padre. */
+    const screw = (parent, x, y, z, out, length, o = null, small = false) => {
+      const sc = small ? screwModel(this.materials.screw, length, 0.9, 1.9, 1.1) : screwModel(this.materials.screw, length);
+      sc.quaternion.setFromUnitVectors(Zv, out);
+      sc.position.set(x, y, z); if (o) sc.position.sub(o);
+      parent.add(sc);
+    };
+    const up = Zv, down = Zv.clone().negate(), outer = Yv.clone().negate(), inner = Yv;
+    // Tornillos que unen la tapa a la caja
+    for (const sx of [1, -1]) screw(this.asm, sx * 31, 0, 19.5, X.clone().multiplyScalar(sx), 6);
     const body = { name: 'el cuerpo', leg: null, ref: boxMesh, meshes: [boxMesh, coverMesh] };
     this.solids.push(body);
 
@@ -462,13 +567,13 @@ class KameRobot {
       const A = new THREE.Vector3(sx * 47, -26, 7);   // eje del servo de la pata
       const B = new THREE.Vector3(sx * 59, -26, 30);  // pivote de la bieleta
       const hip = new THREE.Group(); hip.position.copy(H);
-      const bracketMesh = mesh(parts.bracket, this.materials.yellow); bracketMesh.position.copy(H).negate();
+      const bracketMesh = mesh(parts.bracket, this.materials.bracket); bracketMesh.position.copy(H).negate();
       const legPivot = new THREE.Group(); legPivot.position.copy(A).sub(H);
-      const legMesh = mesh(parts.leg, this.materials.black); legMesh.position.copy(A).negate();
+      const legMesh = mesh(parts.leg, this.materials.leg); legMesh.position.copy(A).negate();
       const linkPivot = new THREE.Group(); linkPivot.position.copy(B).sub(H);
-      const linkMesh = mesh(parts.link, this.materials.black); linkMesh.position.copy(B).negate();
+      const linkMesh = mesh(parts.link, this.materials.link); linkMesh.position.copy(B).negate();
       const footGroup = new THREE.Group();
-      const footMesh = mesh(parts.foot, this.materials.yellow); footMesh.position.copy(H).negate();
+      const footMesh = mesh(parts.foot, this.materials.foot); footMesh.position.copy(H).negate();
       // v: del eje de la pata al pivote del pie (lado del paralelogramo)
       const v = new THREE.Vector3(sx * 42, 0, -10);
       // Servo de la cadera: fijo al cuerpo, eje hacia abajo, aletas sobre el fondo de la caja
@@ -477,11 +582,34 @@ class KameRobot {
       // Servo de la pata: fijo al soporte, eje hacia -Y, aletas por fuera del soporte
       const legServo = servoModel(this.materials);
       legServo.rotation.x = Math.PI / 2; legServo.position.set(A.x, -36, A.z).sub(H);
-      // Brazo del servo: gira con la pata, por fuera de ella
-      const horn = hornModel(this.materials, v);
-      horn.position.y = -52.3 - A.y;
-      legPivot.add(legMesh, horn); linkPivot.add(linkMesh); footGroup.add(footMesh);
-      hip.add(bracketMesh, legServo, legPivot, linkPivot, footGroup);
+      // Brazos de los servos, encajados en los huecos que traen las piezas:
+      // el de la pata (hueco de 2 mm en su cara exterior, Y = -51) y el de la
+      // cadera (hueco en la base del soporte, Z = -9).
+      const basis = (x, z) => new THREE.Matrix4().makeBasis(x.normalize(), z.clone().cross(x).normalize(), z);
+      const legHorn = hornModel(this.materials);
+      legHorn.applyMatrix4(basis(new THREE.Vector3(sx * 14.45, 0, -7.3), outer));
+      legHorn.position.set(0, -49 - A.y, 0);
+      const hipHorn = hornModel(this.materials);
+      hipHorn.applyMatrix4(basis(new THREE.Vector3(sx * 15, -6.2, 0), down));
+      hipHorn.position.set(0, 0, -7);
+      // Casquillos: en lo alto del soporte (giro de la cadera) y en la cara interior de la pata
+      const topBushing = mesh(bushing, this.materials.bushingTop);
+      topBushing.rotation.x = Math.PI; topBushing.position.set(0, 0, 34);
+      const legBushing = mesh(bushing, this.materials.bushingLeg);
+      legBushing.rotation.x = Math.PI / 2; legBushing.position.set(0, -9.5 - A.y, 0);
+      // Tornillos: giro de la cadera, eje interior de la pata, bieleta, pie, brazos y fijación del servo
+      const C = A.clone().add(v), D = B.clone().add(v);
+      screw(hip, H.x, H.y, 34, up, 12, H);
+      screw(hip, A.x, -9.5, A.z, inner, 7, H);
+      screw(hip, B.x, -38, B.z, outer, 24, H);
+      screw(footGroup, C.x, -38, C.z, outer, 24, H);
+      screw(footGroup, D.x, -38, D.z, outer, 24, H);
+      screw(legPivot, A.x, -51, A.z, outer, 6, A, true);
+      screw(hip, H.x, H.y, -9, down, 6, H, true);
+      screw(hip, A.x, -38.5, -1.5, outer, 9, H, true);
+      screw(hip, A.x, -38.5, 26.5, outer, 9, H, true);
+      legPivot.add(legMesh, legHorn, legBushing); linkPivot.add(linkMesh); footGroup.add(footMesh);
+      hip.add(bracketMesh, legServo, legPivot, linkPivot, footGroup, hipHorn, topBushing);
       parent.add(hip, hipServo);
 
       // Sólidos de la pata y parejas que pueden chocar. En las parejas unidas por
@@ -493,7 +621,7 @@ class KameRobot {
         return s;
       };
       const sBracket = solid('el soporte', bracketMesh, legServo.children);
-      const sLeg = solid('la pata', legMesh, horn.children);
+      const sLeg = solid('la pata', legMesh);
       const sLink = solid('la bieleta', linkMesh);
       const sFoot = solid('el pie', footMesh);
       const Z = new THREE.Vector3(0, 0, 1), Y = new THREE.Vector3(0, 1, 0);
@@ -660,16 +788,51 @@ class KameRobot {
     }
   }
 
+  /** Ojos saltones: base blanca, pupila negra suelta y cúpula transparente. */
   #addEyes() {
-    const white = new THREE.MeshStandardMaterial({ color: 0xf4f4f4, roughness: 0.3 });
-    const black = new THREE.MeshStandardMaterial({ color: 0x050505, roughness: 0.3 });
-    for (const x of [-11, 11]) {
-      const eye = new THREE.Mesh(new THREE.SphereGeometry(6.5, 24, 16), white);
-      eye.scale.y = 0.45; eye.position.set(x, -36.5, 13);
-      const pupil = new THREE.Mesh(new THREE.SphereGeometry(3.2, 16, 12), black);
-      pupil.scale.y = 0.4; pupil.position.set(x, -39, 12);
-      this.asm.add(eye, pupil);
+    const white = new THREE.MeshStandardMaterial({ color: 0xf6f6f2, roughness: 0.5 });
+    const black = new THREE.MeshStandardMaterial({ color: 0x050505, roughness: 0.25 });
+    const dome = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.03, transparent: true, opacity: 0.22, clearcoat: 1 });
+    const disc = (r, h) => new THREE.CylinderGeometry(r, r, h, 32); // eje Y: mira al frente (-Y)
+    for (const x of [-9, 9]) {
+      const base = new THREE.Mesh(disc(7.5, 0.8), white); base.position.set(x, -36.4, 12.5);
+      const pupil = new THREE.Mesh(disc(4.4, 0.6), black); pupil.position.set(x - Math.sign(x) * 0.8, -37.1, 11.2);
+      const cover = new THREE.Mesh(new THREE.SphereGeometry(7.2, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2), dome);
+      cover.scale.y = 0.5; cover.rotation.x = Math.PI; cover.position.set(x, -36.8, 12.5);
+      base.castShadow = true;
+      this.asm.add(base, pupil, cover);
     }
+  }
+
+  /** Módulo de radio (blindaje metálico con su inscripción), visible por la ventana de la tapa (X ±9, Y -8…16). */
+  #addModule(cover) {
+    cover.computeBoundingBox();
+    const top = cover.boundingBox.max.z;
+    const label = canvasTexture(256, 256, (c, w, h) => {
+      c.fillStyle = '#b9bcc0'; c.fillRect(0, 0, w, h);
+      for (let k = 0; k < 900; k++) { // textura de metal cepillado
+        c.fillStyle = k % 2 ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)';
+        c.fillRect(Math.random() * w, Math.random() * h, 30 + Math.random() * 60, 1);
+      }
+      c.strokeStyle = 'rgba(0,0,0,0.35)'; c.lineWidth = 3; c.strokeRect(8, 8, w - 16, h - 16);
+      c.fillStyle = 'rgba(30,32,36,0.8)'; c.font = 'bold 30px sans-serif'; c.fillText('ESP32', 26, 70);
+      c.font = '17px sans-serif'; c.fillText('WROOM-32', 26, 98);
+      c.fillRect(26, 120, 70, 70);                                   // código de matriz
+      c.fillStyle = '#b9bcc0';
+      for (let a = 0; a < 7; a++) for (let b = 0; b < 7; b++) if ((a * 7 + b * 3 + a * b) % 3 === 0) c.fillRect(31 + a * 9, 125 + b * 9, 7, 7);
+      c.fillStyle = 'rgba(30,32,36,0.8)'; c.font = '13px sans-serif';
+      c.fillText('2.4 GHz', 116, 140); c.fillText('Wi-Fi · BT', 116, 160);
+    });
+    const metal = new THREE.MeshStandardMaterial({ color: 0xc4c7cb, roughness: 0.32, metalness: 0.9 });
+    const face = new THREE.MeshStandardMaterial({ map: label, roughness: 0.38, metalness: 0.75 });
+    const pcb = new THREE.MeshStandardMaterial({ color: 0x15171a, roughness: 0.6 });
+    const board = new THREE.Mesh(new THREE.BoxGeometry(17.6, 23.6, 0.8), pcb);
+    board.position.set(0, 4, top - 3.4);
+    // Caras de la caja: ±X, ±Y, +Z (arriba, con la inscripción), -Z
+    const shield = new THREE.Mesh(new THREE.BoxGeometry(15.8, 17.6, 2.4), [metal, metal, metal, metal, face, metal]);
+    shield.position.set(0, 1.4, top - 1.8);
+    shield.castShadow = true;
+    this.asm.add(board, shield);
   }
 
   /**
@@ -719,10 +882,17 @@ camera.position.set(0.24, 0.2, 0.34);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0, 0.03, 0);
 controls.enableDamping = true;
-controls.minDistance = 0.12; controls.maxDistance = 2;
+controls.minDistance = 0.06; controls.maxDistance = 2;
 controls.maxPolarAngle = Math.PI / 2 - 0.02;
 
-scene.add(new THREE.HemisphereLight(0xffffff, 0x3a4048, 1.6));
+// Entorno de reflejos suaves: da brillo al plástico y al metal
+{
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+  scene.environmentIntensity = 0.55;
+  pmrem.dispose();
+}
+scene.add(new THREE.HemisphereLight(0xffffff, 0x3a4048, 0.9));
 const sun = new THREE.DirectionalLight(0xffffff, 2.2);
 const SUN_OFFSET = new THREE.Vector3(0.3, 0.6, 0.35);
 sun.position.copy(SUN_OFFSET);
@@ -735,11 +905,27 @@ scene.add(sun);
 
 /** Suelo virtual del modo 3D (se oculta en AR). */
 const floor = new THREE.Group();
-const floorMesh = new THREE.Mesh(new THREE.CircleGeometry(4, 96), new THREE.MeshStandardMaterial({ color: 0x1f6f63, roughness: 0.9 }));
+/** Tapete de corte: cuadrícula de 1 cm con líneas más marcadas cada 5 cm (una baldosa = 5 cm). */
+const matTexture = canvasTexture(512, 512, (c, w) => {
+  c.fillStyle = '#1c7a68'; c.fillRect(0, 0, w, w);
+  for (let k = 0; k < 2600; k++) { // grano de la goma
+    c.fillStyle = k % 2 ? 'rgba(255,255,255,0.035)' : 'rgba(0,0,0,0.035)';
+    c.fillRect(Math.random() * w, Math.random() * w, 2, 2);
+  }
+  const line = (pos, width, alpha, dash = []) => {
+    c.strokeStyle = `rgba(232,246,238,${alpha})`; c.lineWidth = width; c.setLineDash(dash);
+    c.beginPath(); c.moveTo(pos, 0); c.lineTo(pos, w); c.moveTo(0, pos); c.lineTo(w, pos); c.stroke();
+  };
+  const cm = w / 5;
+  for (let k = 0; k < 5; k++) { line(k * cm + cm / 2, 1, 0.22, [3, 5]); if (k) line(k * cm, 1.5, 0.5); }
+  line(0, 5, 0.75); line(w, 5, 0.75);
+});
+matTexture.wrapS = matTexture.wrapT = THREE.RepeatWrapping;
+matTexture.repeat.set(160, 160); // 8 m de diámetro / 5 cm
+matTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+const floorMesh = new THREE.Mesh(new THREE.CircleGeometry(4, 96), new THREE.MeshStandardMaterial({ map: matTexture, roughness: 0.85 }));
 floorMesh.rotation.x = -Math.PI / 2; floorMesh.receiveShadow = true;
-const grid = new THREE.GridHelper(8, 800, 0xffffff, 0xffffff);
-grid.material.opacity = 0.13; grid.material.transparent = true; grid.position.y = 0.0004;
-floor.add(floorMesh, grid);
+floor.add(floorMesh);
 scene.add(floor);
 
 /** Sombra sobre el suelo real en AR. */
@@ -762,7 +948,8 @@ addEventListener('resize', () => {
 /* ==========================================================================
  * physics — robot articulado en Rapier
  *
- * Nueve sólidos rígidos: el cuerpo y, por pata, el soporte y la pata. Ocho
+ * Trece sólidos rígidos: el cuerpo y, por pata, el soporte, la pata y el pie
+ * (unido por un paralelogramo real). Ocho
  * articulaciones de revolución con motor de posición, una por servo, que
  * siguen los ángulos de las marchas. El robot se desplaza por la fricción de
  * sus pies con el suelo.
@@ -780,16 +967,16 @@ addEventListener('resize', () => {
 const PHYS = {
   scale: 10,               // unidades de física por metro
   dt: 1 / 240,             // paso fijo (s)
-  iterations: 8,           // iteraciones del resolvedor por paso
+  iterations: 12,          // iteraciones del resolvedor por paso
   hullDirections: 40,      // vértices máximos de cada colisionador convexo
   gravity: 9.81,           // m/s²
   servoSpeed: 600,         // °/s, velocidad máxima de un SG90 (0,1 s / 60°)
-  stiffness: 120,          // rigidez del servo (par por radián de error, en unidades de física)
-  damping: 2.5,            // amortiguación del servo
+  stiffness: 400,          // rigidez del servo: da su par máximo con unos 2,5° de error
+  damping: 2,              // amortiguación del servo (con el par máximo, limita su velocidad a ~500 °/s)
   stallTorque: 17.6,       // par máximo del servo: 1,8 kg·cm = 0,176 N·m (×100 en unidades de física)
   friction: { foot: 0.9, other: 0.5, ground: 0.9 },
   mass: { body: 0.150, bracket: 0.020, leg: 0.008, foot: 0.007 }, // kg (soporte incluye su servo)
-  bodyCom: [0, 0, 13],     // centro de masas del cuerpo en el ensamblaje (mm)
+  bodyCom: [0, -10, 8],    // centro de masas del cuerpo (mm): estimado, algo bajo y adelantado para que el salto caiga de pie
   startHeight: 20.5,       // mm del origen del cuerpo sobre el suelo en la postura de calibración
 };
 
@@ -898,8 +1085,13 @@ const physics = {
       const legBody = dynamic({ x: pA.x, y: pA.y + y0, z: pA.z });
       world.createCollider(hull([sLeg.ref], w, A)
         .setMass(PHYS.mass.leg).setFriction(PHYS.friction.other).setCollisionGroups(g), legBody);
-      const foot = world.createCollider(hull([sFoot.ref], w, A)
-        .setMass(PHYS.mass.foot).setFriction(PHYS.friction.foot).setCollisionGroups(g), legBody);
+      // El pie es un sólido propio: cuelga del extremo de la pata (pivote C) y el
+      // paralelogramo lo mantiene siempre paralelo al soporte.
+      const C = { x: A.x + v.x, y: A.y + v.y, z: A.z + v.z };
+      const pC = toPhys(C.x, C.y, C.z);
+      const foot = dynamic({ x: pC.x, y: pC.y + y0, z: pC.z });
+      world.createCollider(hull([sFoot.ref], w, C)
+        .setMass(PHYS.mass.foot).setFriction(PHYS.friction.foot).setCollisionGroups(g), foot);
 
       // Ejes de salida de los servos: la articulación gira (ángulo - 90)° alrededor de ellos
       const hipAxis = toPhys(0, 0, -1 * 100), legAxis = toPhys(0, w * -1 * 100, 0);
@@ -915,11 +1107,16 @@ const physics = {
       const hipJoint = joint(R.JointData.revolute(pH, zero, hipAxis), this.body, bracket, HIP_SERVO[i]);
       const dA = toPhys(A.x - H.x, A.y - H.y, A.z - H.z);
       const legJoint = joint(R.JointData.revolute(dA, zero, legAxis), bracket, legBody, LEG_SERVO[i]);
+      // Paralelogramo: rótula entre pata y pie en C, y giro del pie bloqueado respecto al soporte
+      const dC = toPhys(v.x, v.y, v.z);
+      world.createImpulseJoint(R.JointData.spherical(dC, zero), legBody, foot, true).setContactsEnabled(false);
+      const M = R.JointAxesMask;
+      world.createImpulseJoint(R.JointData.generic(zero, zero, { x: 1, y: 0, z: 0 }, M.AngX | M.AngY | M.AngZ),
+        bracket, foot, true).setContactsEnabled(false);
 
       return {
         bracket, legBody, foot, hipJoint, legJoint, hipAxis, legAxis,
-        home: { bracket: pH, leg: pA },
-        footPivot: toPhys(v.x, v.y, v.z),
+        home: { bracket: pH, leg: pA, foot: pC },
       };
     });
     this.command = zeroPose();
@@ -974,12 +1171,6 @@ const physics = {
     this.legs.forEach((leg, i) => {
       leg.hipJoint.configureMotorPosition((this.command[HIP_SERVO[i]] - 90) * DEG, PHYS.stiffness, PHYS.damping);
       leg.legJoint.configureMotorPosition((this.command[LEG_SERVO[i]] - 90) * DEG, PHYS.stiffness, PHYS.damping);
-      // Paralelogramo: el pie deshace el giro de la pata alrededor de su pivote
-      const phi = (real[LEG_SERVO[i]] - 90) * DEG;
-      _qa.setFromAxisAngle(_p.set(leg.legAxis.x, leg.legAxis.y, leg.legAxis.z), -phi);
-      _q.set(leg.footPivot.x, leg.footPivot.y, leg.footPivot.z).applyQuaternion(_qa);
-      leg.foot.setRotationWrtParent({ x: _qa.x, y: _qa.y, z: _qa.z, w: _qa.w });
-      leg.foot.setTranslationWrtParent({ x: leg.footPivot.x - _q.x, y: leg.footPivot.y - _q.y, z: leg.footPivot.z - _q.z });
     });
     this.world.step();
     this.time += PHYS.dt;
@@ -1014,7 +1205,7 @@ const physics = {
       rb.setLinvel(zero, true); rb.setAngvel(zero, true);
     };
     place(this.body, zero);
-    for (const leg of this.legs) { place(leg.bracket, leg.home.bracket); place(leg.legBody, leg.home.leg); }
+    for (const leg of this.legs) { place(leg.bracket, leg.home.bracket); place(leg.legBody, leg.home.leg); place(leg.foot, leg.home.foot); }
     this.command = zeroPose();
     this.acc = 0;
     this.syncVisual();
@@ -1370,6 +1561,9 @@ function runSelfTest() {
     settle();
     pose = play(kame32.hello());
     check('físicas: hello termina de pie', pose.up > 0.95, `inclinación ${deg(Math.acos(pose.up)).toFixed(1)}°`);
+    settle();
+    pose = play(kame32.jump());
+    check('físicas: jump salta hacia delante y cae de pie', pose.up > 0.99 && pose.z > 0.01, `avance ${(pose.z * 1000).toFixed(0)} mm`);
     physics.reset(0.3);
     physics.simulate(2, () => home);
     pose = physics.pose();
