@@ -11,8 +11,8 @@ KameAR pone un robot [Kame32](https://github.com/JavierIH/kame32) en tu habitaci
 
 | Dispositivo | Qué ofrece |
 |---|---|
-| Meta Quest 3 | Realidad aumentada con las manos: panel flotante que te acompaña (con un asa para moverlo), coger y empujar el robot, oclusión con el entorno |
-| Android (Chrome con ARCore) | Realidad aumentada: el robot sobre el suelo o una mesa, con el panel de fichas fijo abajo, en pestañas que se recogen |
+| Meta Quest 3 | Realidad aumentada con las manos: panel flotante que te acompaña (con un asa para moverlo y un botón para recogerlo), coger y empujar el robot, oclusión con el entorno |
+| Android (Chrome con ARCore) | Realidad aumentada: el robot sobre el suelo o una mesa, con el panel de fichas en un cajón fijo abajo (reducido o ampliado) y una barra mínima arriba |
 | iPhone y iPad | Realidad aumentada a través de [Variant Launch](https://launch.variant3d.com/): Safari muestra una tarjeta que abre la página en un visor con AR. Sin oclusión con el entorno |
 | Escritorio | Modo 3D, sin realidad aumentada, con la programación y las físicas completas |
 
@@ -22,11 +22,11 @@ KameAR pone un robot [Kame32](https://github.com/JavierIH/kame32) en tu habitaci
 2. Apunta al suelo o a una mesa y toca (o pellizca, en el visor) para colocar el robot.
 3. Toca las fichas del panel para crear el programa y pulsa **▶ Ejecutar**.
 
-El panel se esconde al ejecutar; toca el robot para que vuelva. El botón **?** abre la ayuda con las instrucciones de tu dispositivo.
+El panel se aparta al ejecutar; toca el robot para que vuelva. El botón **?** abre la ayuda con las instrucciones de tu dispositivo. Los servos, las marchas de prueba y las opciones de depuración están plegados en **Herramientas de ingeniería**.
 
 En las Quest:
 
-- El panel flota a tu lado (el de la mano dominante) y te sigue; pulsa las fichas con el índice. Pellizca la barra de debajo para moverlo.
+- El panel flota a tu lado (el de la mano dominante) y te sigue; pulsa las fichas con el índice. Pellizca la barra de debajo para moverlo. El botón redondo junto a ella lo recoge; para recuperarlo, púlsalo o vuelve la palma de la otra mano hacia ti.
 - Pellizca junto al robot con la mano dominante para cogerlo. Las dos manos lo empujan.
 - Un pellizco con la mano no dominante sale de la realidad aumentada.
 

@@ -11,119 +11,202 @@
 <meta property="og:type" content="website">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2314181d'/%3E%3Cpath d='M8 44l8-22h10M56 44l-8-22H38' fill='none' stroke='%23dff214' stroke-width='7' stroke-linecap='round' stroke-linejoin='round'/%3E%3Crect x='20' y='16' width='24' height='22' rx='4' fill='%23222428' stroke='%23dff214' stroke-width='2'/%3E%3Ccircle cx='27' cy='27' r='4.5' fill='%23fff'/%3E%3Ccircle cx='37' cy='27' r='4.5' fill='%23fff'/%3E%3Ccircle cx='28' cy='28' r='2' fill='%23000'/%3E%3Ccircle cx='38' cy='28' r='2' fill='%23000'/%3E%3C/svg%3E">
 <style>
+  /* Sistema de diseño: estos tokens son la única fuente de colores, radios y tamaños.
+     El panel en lienzo (escritorio y visor) los lee con getComputedStyle. Contraste
+     comprobado con WCAG AA sobre el fondo de los paneles. */
   :root {
     --bg: #14181d;
-    --panel: rgba(22, 27, 34, 0.88);
-    --line: rgba(255, 255, 255, 0.12);
-    --text: #e8edf2;
-    --muted: #9aa7b4;
+    --panel: rgba(22, 27, 34, 0.92);
+    --panel-solid: #161b22;
+    --line: rgba(255, 255, 255, 0.14);
+    --line-strong: #6b788a;
+    --text: #eef2f6;
+    --muted: #bcc6d1;
     --accent: #d8f000;
     --accent-ink: #1a1d00;
+    --control: #424d5e;
+    --control-hover: #515d70;
+    --move: #2f7fe6;
+    --act: #d0661c;
+    --ctl: #e9cc1c;
+    --ctl-ink: #1b1b1d;
+    --go: #23824a;
+    --halt: #c0463c;
+    --sel: #35e0ff;
+    --error: #ffb3b3;
+    --r-container: 12px;
+    --r-control: 8px;
+    --touch: 44px;
   }
   * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text);
-    font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  /* El tamaño de letra base es el del navegador (rem): respeta el escalado tipográfico del usuario */
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text); }
+  body { font: 0.875rem/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
   canvas { display: block; touch-action: none; }
   /* En AR, la página no tapa la imagen de la cámara: en el visor de iPhone
      (Variant Launch) la cámara se pinta detrás de la página, no dentro del lienzo. */
   html.ar, html.ar body { background: transparent; }
+  .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden;
+    clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+  .ico { width: 1.25em; height: 1.25em; flex: none; fill: none; stroke: currentColor; stroke-width: 2.2;
+    stroke-linecap: round; stroke-linejoin: round; }
+  .ico .f { fill: currentColor; }
   #overlay { position: fixed; inset: 0; pointer-events: none; }
   #overlay > * { pointer-events: auto; }
-  #panel { position: absolute; left: 12px; bottom: 12px; width: min(330px, calc(100vw - 24px));
-    max-height: calc(100vh - 24px); overflow: auto; padding: 12px; border-radius: 12px;
-    background: var(--panel); border: 1px solid var(--line); backdrop-filter: blur(8px); }
-  #panel h1 { margin: 0 0 2px; font-size: 16px; }
-  #panel .sub { margin: 0 0 10px; color: var(--muted); font-size: 12px; }
-  .row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
-  button, select { font: inherit; color: var(--text); background: rgba(255, 255, 255, 0.08);
-    border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; cursor: pointer; }
-  button:hover { background: rgba(255, 255, 255, 0.16); }
+
+  button, select { font: inherit; color: var(--text); background: var(--control); border: 1px solid var(--line-strong);
+    border-radius: var(--r-control); min-height: var(--touch); padding: 0.5rem 0.75rem; cursor: pointer; }
+  button { display: inline-flex; align-items: center; justify-content: center; gap: 0.4em; }
+  button:hover { background: var(--control-hover); }
+  button:focus-visible, select:focus-visible, summary:focus-visible, input:focus-visible {
+    outline: 3px solid var(--sel); outline-offset: 2px; }
   button.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; font-weight: 600; }
   button:disabled { opacity: 0.45; cursor: default; }
-  select { flex: 1; min-width: 0; }
+  button.icon-btn { width: var(--touch); padding: 0; }
+  select { min-width: 0; }
   select option { color: #111; }
-  .check { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 12px; }
-  .check input { accent-color: var(--accent); }
+
+  /* Panel de herramientas: nivel 1 visible, nivel 2 («ingeniería») plegado */
+  #panel { position: absolute; left: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); width: min(22rem, calc(100vw - 24px));
+    max-height: calc(100vh - 24px); overflow: auto; padding: 0.75rem; border-radius: var(--r-container);
+    background: var(--panel); border: 1px solid var(--line); backdrop-filter: blur(8px); }
+  #panel .head { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.625rem; }
+  #panel h1 { margin: 0; font-size: 1rem; display: flex; align-items: center; gap: 0.5rem; }
+  #panel .sub { margin: 0.125rem 0 0; color: var(--muted); font-size: 0.75rem; }
+  #panel .tools { display: flex; gap: 0.375rem; }
+  .badge { padding: 0.0625rem 0.5rem; border-radius: 999px; border: 1px solid var(--line-strong); color: var(--muted);
+    font-size: 0.6875rem; font-weight: 600; cursor: help; }
+  .badge[hidden] { display: none; }
+  .badge.ar { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+  .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 0.375rem; margin-bottom: 0.625rem; }
+  .actions.three { grid-template-columns: repeat(3, 1fr); }
+  .actions .wide { grid-column: 1 / -1; }
+  .field { display: flex; align-items: center; gap: 0.4rem; min-width: 0; padding: 0 0 0 0.5rem; border-radius: var(--r-control);
+    border: 1px solid var(--line-strong); background: var(--control); color: var(--text); }
+  .field select { flex: 1; border: none; background: transparent; padding: 0.5rem 0.25rem; }
+  .check { display: flex; align-items: center; gap: 0.5rem; min-height: var(--touch); color: var(--text); font-size: 0.8125rem; cursor: pointer; }
+  .check input { width: 1.125rem; height: 1.125rem; accent-color: var(--accent); }
+  #advanced { border-top: 1px solid var(--line); }
+  #advanced > summary { display: flex; align-items: center; gap: 0.5rem; min-height: var(--touch); cursor: pointer;
+    font-weight: 600; list-style: none; }
+  #advanced > summary::-webkit-details-marker { display: none; }
+  #advanced > summary .chev { margin-left: auto; transition: transform 0.15s; }
+  #advanced[open] > summary .chev { transform: rotate(180deg); }
+  #advanced h3 { margin: 0.75rem 0 0.375rem; font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.04em;
+    text-transform: uppercase; color: var(--muted); }
+  .gait { display: grid; grid-template-columns: 1fr auto; gap: 0.375rem; margin-bottom: 0.25rem; }
+  .servo { display: grid; grid-template-columns: 7.5rem 1fr 2.25rem; align-items: center; gap: 0.375rem; margin: 0.125rem 0; }
+  .servo label { color: var(--muted); font-size: 0.75rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .servo output { text-align: right; font-variant-numeric: tabular-nums; }
+  .servo input { width: 100%; min-height: 2rem; accent-color: var(--accent); }
+  #collision { margin: 0.5rem 0 0; font-size: 0.75rem; color: var(--error); min-height: 1.4em; }
+  #envInfo, #perfInfo { margin: 0.25rem 0 0; font-size: 0.75rem; color: var(--muted); }
+  #envInfo:empty, #perfInfo:empty { display: none; }
+  #credit { margin: 0.625rem 0 0; font-size: 0.6875rem; color: var(--muted); }
+  #credit a { color: inherit; }
+  /* Panel recogido: solo queda su botón */
+  #panel.hidden { width: auto; padding: 0.375rem; }
+  #panel.hidden .head { margin: 0; }
+  #panel.hidden > :not(.head), #panel.hidden .title, #panel.hidden #btnHelp { display: none; }
+
+  /* Indicador de estado: avisos temporales (se desvanecen) y guías que se quedan */
+  #status { position: absolute; left: 50%; top: calc(12px + env(safe-area-inset-top)); transform: translateX(-50%);
+    max-width: min(32rem, calc(100vw - 24px)); padding: 0.5rem 0.875rem; border-radius: var(--r-container);
+    background: var(--panel); border: 1px solid var(--line); font-size: 0.8125rem; text-align: center;
+    transition: opacity 0.3s, translate 0.3s; }
+  #status:empty { display: none; }
+  #status.fading { opacity: 0; translate: 0 -8px; }
+  #status.error { border-color: #ff6b6b; color: var(--error); }
+
+  /* AR en el móvil: sin panel de herramientas; arriba, una barra mínima */
+  #arbar { position: absolute; top: calc(12px + env(safe-area-inset-top)); right: 12px; display: flex; gap: 0.375rem; }
+  #arbar[hidden] { display: none; }
+  #arbar button { width: var(--touch); padding: 0; background: var(--panel); backdrop-filter: blur(8px); }
+  #arbar button[hidden] { display: none; }
+  #arbar .exit { background: var(--halt); border-color: transparent; color: #fff; }
+  html.ar.handheld #panel { display: none; }
+  html.ar.handheld #status { left: 12px; transform: none; text-align: left;
+    max-width: calc(100vw - 24px - 3 * var(--touch) - 3 * 0.375rem - 6px); }
+
+  /* Ayuda */
+  #help { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(29rem, calc(100vw - 24px));
+    max-height: calc(100vh - 24px); overflow: auto; padding: 1.125rem 1.25rem; border-radius: var(--r-container);
+    background: var(--panel); border: 1px solid var(--line); backdrop-filter: blur(8px); }
+  #help[hidden] { display: none; }
+  #help h2 { margin: 0 0 0.25rem; font-size: 1.125rem; }
+  #help h3 { margin: 0.875rem 0 0.25rem; font-size: 0.8125rem; color: var(--accent); }
+  #help p, #help li { font-size: 0.8125rem; line-height: 1.45; }
+  #help p { margin: 0 0 0.375rem; color: var(--muted); }
+  #help ol { margin: 0; padding-left: 1.25rem; }
+  #help .end { display: flex; justify-content: flex-end; margin-top: 0.875rem; }
+
   #tests { position: absolute; right: 12px; top: 12px; width: min(460px, calc(100vw - 24px)); max-height: calc(100vh - 24px);
-    overflow: auto; padding: 12px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); font-size: 12px; }
+    overflow: auto; padding: 12px; border-radius: var(--r-container); background: var(--panel); border: 1px solid var(--line); font-size: 12px; }
   #tests h2 { margin: 0 0 8px; font-size: 14px; }
   #tests ul { margin: 0; padding: 0; list-style: none; }
   #tests li { padding: 2px 0; }
   #tests .ok::before { content: "✓ "; color: #7ee787; }
-  #tests .fail { color: #ffb3b3; }
+  #tests .fail { color: var(--error); }
   #tests .fail::before { content: "✗ "; }
-  .servo { display: grid; grid-template-columns: 118px 1fr 34px; align-items: center; gap: 6px; margin: 3px 0; }
-  .servo label { color: var(--muted); font-size: 12px; white-space: nowrap; }
-  .servo output { text-align: right; font-variant-numeric: tabular-nums; }
-  .servo input { width: 100%; accent-color: var(--accent); }
-  details summary { cursor: pointer; color: var(--muted); margin-bottom: 6px; }
-  #status { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); max-width: calc(100vw - 24px);
-    padding: 7px 12px; border-radius: 999px; background: var(--panel); border: 1px solid var(--line);
-    font-size: 13px; text-align: center; }
-  #status:empty { display: none; }
-  #status.error { border-color: #ff6b6b; color: #ffb3b3; border-radius: 12px; }
-  #collision { margin: 8px 0 0; font-size: 12px; color: #ff9d9d; min-height: 1.4em; }
-  #envInfo, #perfInfo { margin: 0; font-size: 12px; color: var(--muted); }
-  #envInfo:empty, #perfInfo:empty { display: none; }
-  .head .tools { display: flex; gap: 6px; }
-  #btnHelp { padding: 4px 10px; line-height: 1.2; }
-  #help { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(460px, calc(100vw - 24px));
-    max-height: calc(100vh - 24px); overflow: auto; padding: 18px 20px; border-radius: 14px;
-    background: var(--panel); border: 1px solid var(--line); backdrop-filter: blur(8px); }
-  #help[hidden] { display: none; }
-  #help h2 { margin: 0 0 4px; font-size: 18px; }
-  #help h3 { margin: 14px 0 4px; font-size: 13px; color: var(--accent); }
-  #help p, #help li { font-size: 13px; line-height: 1.45; }
-  #help p { margin: 0 0 6px; color: var(--muted); }
-  #help ol { margin: 0; padding-left: 20px; }
-  #help .row { margin: 14px 0 0; justify-content: flex-end; }
-  #credit { margin: 10px 0 0; font-size: 11px; color: var(--muted); }
-  #credit a { color: inherit; }
-  #panel .head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
-  #btnPanel { padding: 4px 10px; line-height: 1.2; }
-  /* Panel oculto: solo queda el botón para volver a mostrarlo */
-  #panel.hidden { width: auto; padding: 6px; }
-  #panel.hidden > :not(.head), #panel.hidden .title { display: none; }
-  /* Con el panel de fichas abajo a la izquierda, el de herramientas pasa a la derecha */
-  html.dock-left #panel { left: auto; right: 12px; }
 
-  /* Panel de fichas del móvil en AR: fijo en el tercio inferior, del lado de la mano
-     dominante. Páginas apiladas con lengüetas; ▾ lo recoge a solo las lengüetas. */
+  /* Panel de fichas del móvil en AR: un cajón con dos alturas. Recogido, es estrecho
+     (40 % del ancho) y está del lado de la mano dominante: botones de ejecución y la
+     tira del programa. Ampliado, ocupa el ancho y añade edición, borrado y paleta. */
   #blocks { position: absolute; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom));
-    width: clamp(228px, 33.333vw, 380px); max-height: 33.333vh; display: flex; flex-direction: column; }
+    width: clamp(9.5rem, 40vw, 23.75rem); max-height: 33.333vh; display: flex; flex-direction: column;
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-container); backdrop-filter: blur(8px); overflow: hidden; }
   #blocks[hidden] { display: none; }
   #blocks.left { right: auto; left: 12px; }
-  #blocks .tabs { display: flex; gap: 3px; align-items: flex-end; padding: 0 6px; }
-  #blocks .tabs button { flex: 1; min-width: 0; padding: 7px 2px 6px; border-radius: 10px 10px 0 0; border-bottom: none;
-    font-size: 12px; background: rgba(22, 27, 34, 0.7); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  #blocks .tabs button[aria-selected="true"] { background: var(--panel); color: var(--text); font-weight: 600; }
-  #blocks .tabs .fold { flex: 0 0 30px; }
-  #blocks .page { overflow: auto; padding: 8px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line);
-    backdrop-filter: blur(8px); }
-  #blocks.collapsed .page { display: none; }
-  #blocks.collapsed .tabs button { border-radius: 10px; border-bottom: 1px solid var(--line); }
-  #blocks .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(44px, 1fr)); gap: 5px; }
-  #blocks .tile { position: relative; aspect-ratio: 1; padding: 0; border: none; border-radius: 9px; font-size: 21px;
-    font-weight: 700; color: #fff; line-height: 1; }
-  #blocks .tile.move { background: #2f7fe6; } #blocks .tile.act { background: #f08a24; }
-  #blocks .tile.ctl { background: #e9cc1c; color: #1b1b1d; }
-  #blocks .tile .n { position: absolute; right: 2px; bottom: 2px; min-width: 17px; padding: 1px 3px; border-radius: 5px;
-    background: rgba(0, 0, 0, 0.55); color: #fff; font-size: 11px; }
-  #blocks .tile.sel { outline: 3px solid #35e0ff; outline-offset: 1px; }
-  #blocks .tile.active { outline: 3px solid #fff; outline-offset: 1px; }
+  #blocks.expanded { width: min(calc(100vw - 24px), 30rem); max-height: 42vh; }
+  #blocks .grab { position: relative; flex: none; width: 100%; justify-content: space-between; padding: 0.375rem 0.625rem 0;
+    border: none; border-radius: 0; background: none; color: var(--muted); font-size: 0.75rem; font-weight: 600; touch-action: none; }
+  #blocks .grab::before { content: ""; position: absolute; top: 5px; left: 50%; width: 36px; height: 4px; margin-left: -18px;
+    border-radius: 2px; background: var(--line-strong); }
+  #blocks .runbar { flex: none; display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.375rem; padding: 0 0.5rem 0.5rem; }
+  #blocks .runbar button { padding: 0 0.25rem; font-weight: 600; }
+  #blocks .runbar .go { background: var(--go); border-color: transparent; color: #fff; }
+  #blocks .runbar .halt { background: var(--halt); border-color: transparent; color: #fff; }
+  #blocks:not(.expanded) .runbar .lbl { display: none; }
+  #blocks:not(.expanded) .runbar { gap: 4px; padding: 0 4px 6px; }
+  #blocks:not(.expanded) .body { padding: 0 4px 4px; }
+  #blocks:not(.expanded) .prog { gap: 4px; scrollbar-width: thin; }
+  #blocks .body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 0 0.5rem 0.5rem; overscroll-behavior: contain; }
+  #blocks .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--touch), 1fr)); gap: 0.375rem; }
+  #blocks .prog { row-gap: calc(8px + var(--depth, 0) * 5px); padding-bottom: calc(4px + var(--depth, 0) * 5px); }
+  #blocks:not(.expanded) .prog { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: var(--touch);
+    overflow-x: auto; overflow-y: hidden; }
+  #blocks:not(.expanded) .more { display: none; }
+  #blocks .tile { position: relative; aspect-ratio: 1; min-width: var(--touch); padding: 0; border: none;
+    border-radius: var(--r-control); color: #fff; }
+  #blocks .tile .ico { width: 62%; height: 62%; stroke-width: 2.4; }
+  #blocks .tile.move { background: var(--move); }
+  #blocks .tile.act { background: var(--act); }
+  #blocks .tile.ctl { background: var(--ctl); color: var(--ctl-ink); }
+  #blocks .tile .n { position: absolute; right: 2px; bottom: 2px; min-width: 1.0625rem; padding: 1px 3px; border-radius: 5px;
+    background: rgba(0, 0, 0, 0.6); color: #fff; font-size: 0.6875rem; font-weight: 700; line-height: 1.2; }
+  #blocks .tile.sel { outline: 3px solid var(--sel); outline-offset: 2px; }
+  #blocks .tile.active { outline: 3px solid #fff; outline-offset: 2px; }
   #blocks .tile:disabled { opacity: 0.35; }
-  #blocks h4 { margin: 8px 0 4px; font-size: 11px; font-weight: 600; color: var(--muted); }
-  #blocks h4:first-child { margin-top: 0; }
-  #blocks .hint { margin: 2px 0; font-size: 12px; color: var(--muted); }
-  #blocks .edit { margin-top: 8px; }
-  #blocks .edit b { display: block; margin-bottom: 4px; font-size: 12px; }
-  #blocks .buttons { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
-  #blocks .buttons button { flex: 1 0 auto; min-height: 40px; padding: 6px 8px; }
-  #blocks .buttons output { align-self: center; min-width: 24px; text-align: center; font-weight: 700; }
-  #blocks .run { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-  #blocks .run button { min-height: 48px; font-weight: 600; }
-  #blocks .run .go { grid-column: 1 / -1; background: #2e9e5b; border-color: transparent; color: #fff; }
-  #blocks .run .halt { background: #c0463c; border-color: transparent; color: #fff; }
+  /* Corchete de «repetir» y «si hay obstáculo»: une su ficha con su cierre por debajo */
+  #blocks .tile .br { position: absolute; top: 100%; left: -4px; right: -4px; height: calc(var(--o) + 3px);
+    border-bottom: 3px solid var(--ctl); pointer-events: none; }
+  #blocks .tile .br.s { left: 8px; border-left: 3px solid var(--ctl); border-bottom-left-radius: 5px; }
+  #blocks .tile .br.e { right: 8px; border-right: 3px solid var(--ctl); border-bottom-right-radius: 5px; }
+  #blocks .tile .br.o { border-bottom-style: dashed; }
+  #blocks h4 { margin: 0.625rem 0 0.25rem; font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.04em;
+    text-transform: uppercase; color: var(--muted); }
+  #blocks .hint { margin: 0.125rem 0 0.25rem; font-size: 0.75rem; color: var(--muted); }
+  #blocks .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.375rem; margin-top: 0.5rem; }
+  #blocks .row2 button { padding: 0 0.5rem; }
+  #blocks .row2 .undo { background: var(--accent); color: var(--accent-ink); border-color: transparent; font-weight: 600; }
+  /* Edición de la ficha seleccionada: fija al pie, siempre a la vista */
+  #blocks .editbar { flex: none; display: grid; gap: 0.375rem; padding: 0.5rem; border-top: 1px solid var(--line); }
+  #blocks:not(.expanded) .editbar { display: none; }
+  #blocks .editbar .top, #blocks .editbar .ctrls { display: flex; align-items: center; gap: 0.375rem; }
+  #blocks .editbar .name { flex: 1; min-width: 0; font-size: 0.8125rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #blocks .editbar button { flex: 1 0 var(--touch); padding: 0 0.25rem; }
+  #blocks .editbar .top button { flex: 0 0 var(--touch); }
+  #blocks .editbar output { flex: 0 0 2rem; text-align: center; font-weight: 700; font-variant-numeric: tabular-nums; }
 </style>
 <script type="importmap">
 {
@@ -137,64 +220,73 @@
 </head>
 <body>
 <div id="overlay">
-  <div id="status">Cargando el modelo…</div>
-  <div id="panel">
+  <div id="status" role="status" aria-live="polite">Cargando el modelo…</div>
+  <div id="arbar" role="toolbar" aria-label="Realidad aumentada" hidden>
+    <button id="btnArPlace" type="button" aria-label="Recolocar el robot" title="Recolocar el robot"><svg class="ico" data-icon="pin" aria-hidden="true"></svg></button>
+    <button id="btnArHelp" type="button" aria-label="Ayuda" title="Ayuda"><svg class="ico" data-icon="help" aria-hidden="true"></svg></button>
+    <button id="btnArExit" type="button" class="exit" aria-label="Salir de la realidad aumentada" title="Salir de AR"><svg class="ico" data-icon="close" aria-hidden="true"></svg></button>
+  </div>
+  <section id="panel" aria-label="Herramientas">
     <div class="head">
       <div class="title">
-        <h1>KameAR</h1>
+        <h1>KameAR <span id="modeBadge" class="badge" tabindex="0" hidden></span></h1>
         <p class="sub">Robot programable en realidad aumentada</p>
       </div>
       <div class="tools">
-        <button id="btnHelp" aria-label="Ayuda" title="Ayuda">?</button>
-        <button id="btnPanel" aria-expanded="true" aria-label="Ocultar el panel" title="Ocultar el panel">▾</button>
+        <button id="btnHelp" type="button" class="icon-btn" aria-label="Ayuda" title="Ayuda"><svg class="ico" data-icon="help" aria-hidden="true"></svg></button>
+        <button id="btnPanel" type="button" class="icon-btn" aria-expanded="true" aria-controls="panel" aria-label="Recoger las herramientas" title="Recoger las herramientas"><svg class="ico" data-icon="down" aria-hidden="true"></svg></button>
       </div>
     </div>
-    <div class="row">
-      <button id="btnAR" class="primary" disabled>Entrar en AR</button>
-      <button id="btnHome">Home</button>
-      <button id="btnZero">Zero</button>
-      <button id="btnReset" title="Vuelve a colocar el robot en el origen">Reiniciar</button>
-      <button id="btnDrop" title="Suelta el robot desde 30 cm">Soltar</button>
-    </div>
-    <div class="row">
-      <select id="selGait" aria-label="Marcha">
-        <option value="">Marcha (vista previa)…</option>
-      </select>
-      <button id="btnStop">Parar</button>
-      <label class="check"><input type="checkbox" id="chkLoop" checked> Repetir</label>
-    </div>
-    <details class="servos" open>
-      <summary>Servos</summary>
-      <div id="servos"></div>
-    </details>
-    <div class="row">
-      <label class="check"><input type="checkbox" id="chkEnv"> Ver entorno detectado</label>
-      <label class="check"><input type="checkbox" id="chkHud"> Rótulo flotante (visor)</label>
-      <label class="check">Mano dominante
-        <select id="selHand"><option value="right">Derecha</option><option value="left">Izquierda</option></select>
+    <div class="actions">
+      <button id="btnAR" type="button" class="primary wide" disabled><svg class="ico" data-icon="ar" aria-hidden="true"></svg><span>Entrar en AR</span></button>
+      <button id="btnReset" type="button" title="Vuelve a colocar el robot en el origen"><svg class="ico" data-icon="reset" aria-hidden="true"></svg>Reiniciar</button>
+      <label class="field" title="Mano dominante"><svg class="ico" data-icon="hand" aria-hidden="true"></svg><span class="sr-only">Mano dominante</span>
+        <select id="selHand"><option value="right">Diestro</option><option value="left">Zurdo</option></select>
       </label>
     </div>
-    <div class="row">
+    <details id="advanced">
+      <summary><svg class="ico" data-icon="sliders" aria-hidden="true"></svg>Herramientas de ingeniería<svg class="ico chev" data-icon="down" aria-hidden="true"></svg></summary>
+      <h3>Postura</h3>
+      <div class="actions three">
+        <button id="btnHome" type="button" title="Postura de reposo"><svg class="ico" data-icon="home" aria-hidden="true"></svg>Home</button>
+        <button id="btnZero" type="button" title="Los ocho servos a 90°"><svg class="ico" data-icon="zero" aria-hidden="true"></svg>Zero</button>
+        <button id="btnDrop" type="button" title="Suelta el robot desde 30 cm"><svg class="ico" data-icon="drop" aria-hidden="true"></svg>Soltar</button>
+      </div>
+      <h3>Marcha (vista previa)</h3>
+      <div class="gait">
+        <select id="selGait" aria-label="Marcha">
+          <option value="">Elige una marcha…</option>
+        </select>
+        <button id="btnStop" type="button" class="icon-btn" aria-label="Parar la marcha" title="Parar"><svg class="ico" data-icon="stop" aria-hidden="true"></svg></button>
+      </div>
+      <label class="check"><input type="checkbox" id="chkLoop" checked> Repetir la marcha</label>
+      <h3>Servos</h3>
+      <div id="servos"></div>
+      <h3>Visualización</h3>
+      <label class="check"><input type="checkbox" id="chkEnv"> Ver entorno detectado</label>
+      <label class="check"><input type="checkbox" id="chkHud"> Rótulo flotante (visor)</label>
       <label class="check"><input type="checkbox" id="chkPerf"> Ver rendimiento</label>
-    </div>
-    <p id="envInfo"></p>
-    <p id="perfInfo"></p>
+      <p id="envInfo"></p>
+      <p id="perfInfo"></p>
+    </details>
     <p id="collision" role="status"></p>
     <p id="credit">Modelo 3D y marchas: <a href="https://github.com/JavierIH/kame32" target="_blank" rel="noopener">Kame32</a> de JavierIH, licencia CC BY-SA 4.0.</p>
-  </div>
-  <div id="help" role="dialog" aria-labelledby="helpTitle" hidden>
+  </section>
+  <div id="help" role="dialog" aria-modal="true" aria-labelledby="helpTitle" hidden>
     <h2 id="helpTitle">KameAR</h2>
     <p>Un robot cuadrúpedo que programas con fichas desde su panel.</p>
     <h3>Programar</h3>
     <ol>
-      <li>Toca las fichas de abajo del panel para añadirlas al programa.</li>
+      <li>Toca las fichas de la paleta para añadirlas al final del programa.</li>
       <li>Toca una ficha del programa para cambiar su número, moverla o quitarla.</li>
-      <li>Pulsa <b>▶ Ejecutar</b>. El panel se esconde (en el móvil, se recoge); toca el robot para que vuelva.</li>
+      <li>«Repetir» y «Si hay obstáculo» abrazan con un corchete amarillo las fichas que hay hasta su cierre.</li>
+      <li>Pulsa <b>Ejecutar</b>. El panel se aparta para dejar ver al robot; toca el robot para que vuelva.</li>
     </ol>
     <div id="helpDevice"></div>
-    <div class="row"><button id="btnHelpClose" class="primary">Empezar</button></div>
+    <div class="end"><button id="btnHelpClose" type="button" class="primary">Empezar</button></div>
   </div>
-  <div id="blocks" hidden></div>
+  <section id="blocks" aria-label="Panel de fichas" hidden></section>
+  <div id="a11yBlocks" class="sr-only" role="group" aria-label="Panel de fichas"></div>
 </div>
 
 <noscript><p style="position:fixed;inset:0;display:grid;place-items:center;color:#fff;padding:24px;text-align:center">KameAR necesita JavaScript para funcionar.</p></noscript>
@@ -1824,20 +1916,28 @@ const ar = {
       const [dom, other] = hands.dominant === 'right' ? ['derecha', 'izquierda'] : ['izquierda', 'derecha'];
       hud.flash(`Apunta a una superficie con la mano ${dom} y pellizca para colocar el robot.\nPellizco con la mano ${other}: salir.`, 3600);
     }
-    ui.btnAR.textContent = 'Salir de AR';
-    // En el móvil, el panel de herramientas se recoge para dejar sitio al panel de fichas
-    const tools = document.getElementById('panel');
-    if (platform.handheld && !tools.classList.contains('hidden')) document.getElementById('btnPanel').click();
+    ui.setARLabel(true);
+    // En el móvil, el panel de herramientas desaparece: salir, ayuda y recolocar van en la barra de arriba
+    document.documentElement.classList.toggle('handheld', platform.handheld);
+    this.syncBar();
     environment.info();
   },
 
   /** Retira el robot para volver a elegir dónde colocarlo. */
   unplace() {
     program.stop();
-    blockPanel.hidden = false;
+    blockPanel.setHidden(false);
     this.placed = false;
     placement.visible = false;
+    this.syncBar();
     setStatus('Apunta a una superficie y toca para colocar el robot.');
+  },
+
+  /** Barra superior del móvil en AR: visible en la sesión; «recolocar», solo con el robot colocado. */
+  syncBar() {
+    const on = !!this.session && platform.handheld;
+    document.getElementById('arbar').hidden = !on;
+    document.getElementById('btnArPlace').hidden = !(on && this.placed);
   },
 
   place() {
@@ -1856,11 +1956,12 @@ const ar = {
     this.placed = true;
     if (!platform.handheld) {
       const dom = hands.dominant === 'right' ? 'derecha' : 'izquierda';
-      hud.flash(`El panel flota a tu ${dom}: púlsalo con el índice; su barra de abajo lo mueve.\nPellizca junto al robot con la ${dom} para cogerlo; empújalo con las manos.`, 14);
+      hud.flash(`El panel flota a tu ${dom}: púlsalo con el índice. La barra de abajo lo mueve; el botón redondo lo recoge.\nPellizca junto al robot con la ${dom} para cogerlo; empújalo con las manos.`, 14);
     }
     // El entorno se expresa respecto al punto de colocación: hay que recalcularlo
     environment.stale = true;
     environment.sync();
+    this.syncBar();
     setStatus('');
   },
 
@@ -1903,11 +2004,143 @@ const ar = {
     placement.position.set(0, 0, 0);
     placement.rotation.set(0, 0, 0);
     if (physics.ready) physics.reset();
-    ui.btnAR.textContent = 'Entrar en AR';
+    ui.setARLabel(false);
+    document.documentElement.classList.remove('handheld');
+    this.syncBar();
     setStatus('');
     camera.aspect = innerWidth / innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(innerWidth, innerHeight);
+  },
+};
+
+/* ==========================================================================
+ * theme e icons — sistema de diseño compartido por el HTML y el lienzo 3D
+ *
+ * Los colores salen de los tokens CSS (:root), para que el panel dibujado en
+ * el lienzo (escritorio y visor) sea igual que el HTML del móvil. Los iconos
+ * son trazos propios en una cuadrícula de 24 × 24: el HTML los usa como SVG y
+ * el lienzo como Path2D, así se ven idénticos en cualquier sistema, sin
+ * depender de los emojis de cada fabricante.
+ * ========================================================================== */
+
+const theme = (() => {
+  const css = getComputedStyle(document.documentElement);
+  const v = (name) => css.getPropertyValue(`--${name}`).trim();
+  return {
+    panel: v('panel-solid'), text: v('text'), muted: v('muted'), accent: v('accent'), control: v('control'),
+    lineStrong: v('line-strong'), move: v('move'), act: v('act'), ctl: v('ctl'), ctlInk: v('ctl-ink'),
+    go: v('go'), halt: v('halt'), sel: v('sel'),
+  };
+})();
+
+const icons = {
+  /** Nombre: [trazado SVG, relleno]. Los rellenos se pintan además de trazarse. */
+  PATHS: {
+    walk: ['M12 20V5M6 11l6-6 6 6'],
+    backward: ['M12 4v15M6 13l6 6 6-6'],
+    turnL: ['M4.5 12.5A7.5 7.5 0 1 0 8.25 6M12.2 6.7L8.25 6 9.6 2.25'],
+    turnR: ['M19.5 12.5A7.5 7.5 0 1 1 15.75 6M11.8 6.7L15.75 6 14.4 2.25'],
+    hello: ['M8 13V7a1.5 1.5 0 0 1 3 0v4M11 11V5a1.5 1.5 0 0 1 3 0v6M14 11V6.5a1.5 1.5 0 0 1 3 0V14a6 6 0 0 1-6 6h-.5a5 5 0 0 1-4-2l-3-4a1.5 1.5 0 0 1 2.4-1.8L8 14M19.5 3c1 .8 1.6 1.8 1.8 3M3 6.5c.3-1.2.9-2.1 1.8-2.8'],
+    jump: ['M12 15V4M7.5 8.5L12 4l4.5 4.5M5 20h14M8 17h8'],
+    dance: ['M9 17V5.5l10-2.5v12M9 17a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0zM19 15a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0zM9 9.5l10-2.5'],
+    pushUp: ['M6.5 7v10M3.5 9.5v5M17.5 7v10M20.5 9.5v5M6.5 12h11'],
+    repeat: ['M4 11V9a3 3 0 0 1 3-3h12M16 3l3 3-3 3M20 13v2a3 3 0 0 1-3 3H5M8 21l-3-3 3-3'],
+    end: ['M9 4h4a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3H9'],
+    wait: ['M12 21a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM12 9v4l2.5 2M10 2.5h4'],
+    ifObstacle: ['M4 8h16v6H4zM8.5 8l-3 6M14 8l-3 6M19.5 8l-3 6M6 14v6M18 14v6M3 20h18'],
+    speed1: ['M4 17a8 8 0 0 1 16 0M12 17l-5-3.5M12 17h.01'],
+    speed2: ['M4 17a8 8 0 0 1 16 0M12 17v-6.5M12 17h.01'],
+    speed3: ['M4 17a8 8 0 0 1 16 0M12 17l5-3.5M12 17h.01'],
+    play: ['M7 4.5v15l12-7.5z', true],
+    step: ['M5 5v14l9-7zM18.5 5v14', true],
+    stop: ['M6 6h12v12H6z', true],
+    backspace: ['M20 5H9l-6 7 6 7h11a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1zM11.5 9.5l5 5M16.5 9.5l-5 5'],
+    trash: ['M4 7h16M9 7V4.5h6V7M6 7l1 13h10l1-13M10 11v5M14 11v5'],
+    undo: ['M9 14L4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11'],
+    pin: ['M12 21s-6.5-6-6.5-11a6.5 6.5 0 0 1 13 0c0 5-6.5 11-6.5 11zM12 12.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z'],
+    reset: ['M4 11.5L12 4l8 7.5M6.5 9.5V20h11V9.5M10 20v-5h4v5'],
+    help: ['M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM9.5 9.3a2.6 2.6 0 0 1 5 .9c0 1.7-2.5 2.3-2.5 4M12 17.2v.1'],
+    close: ['M6 6l12 12M18 6L6 18'],
+    left: ['M15 5l-7 7 7 7'],
+    right: ['M9 5l7 7-7 7'],
+    up: ['M5 15l7-7 7 7'],
+    down: ['M5 9l7 7 7-7'],
+    minus: ['M5 12h14'],
+    plus: ['M12 5v14M5 12h14'],
+    ar: ['M12 3l8 4.5v9L12 21l-8-4.5v-9zM12 12l8-4.5M12 12v9M12 12L4 7.5'],
+    exit: ['M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 8l-4 4 4 4M6 12h10'],
+    home: ['M7 12V8h10v4M5 12h14M7 12l-2 7M17 12l2 7'],
+    zero: ['M7 12V8h10v4M5 12h14M6 12v7M18 12v7'],
+    drop: ['M12 3v11M8 10l4 4 4-4M5 20h14'],
+    hand: ['M8 13V6.5a1.5 1.5 0 0 1 3 0V12M11 11V4.5a1.5 1.5 0 0 1 3 0V11M14 11V6a1.5 1.5 0 0 1 3 0v8a6 6 0 0 1-6 6h-.5a5 5 0 0 1-4-2l-3.2-4.2a1.5 1.5 0 0 1 2.4-1.8L8 14'],
+    blocks: ['M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z'],
+    sliders: ['M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1M15 4v4M9 10v4M17 16v4'],
+  },
+  _path2d: new Map(),
+
+  /** Icono de una ficha (la velocidad cambia de icono con su número). */
+  token(tok) { return tok.type === 'speed' ? `speed${tok.n}` : tok.type; },
+
+  /** Marcado SVG de un icono. */
+  svg(name, cls = '') {
+    const [d, filled] = this.PATHS[name] ?? this.PATHS.blocks;
+    return `<svg class="ico ${cls}" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="${d}"${filled ? ' class="f"' : ''}/></svg>`;
+  },
+  /** Elemento SVG listo para insertar. */
+  el(name, cls = '') {
+    const t = document.createElement('template');
+    t.innerHTML = this.svg(name, cls);
+    return t.content.firstChild;
+  },
+  /** Rellena los <svg data-icon> escritos en el HTML. */
+  hydrate(root = document) {
+    for (const s of root.querySelectorAll('svg[data-icon]')) {
+      const [d, filled] = this.PATHS[s.dataset.icon] ?? this.PATHS.blocks;
+      s.setAttribute('viewBox', '0 0 24 24');
+      s.setAttribute('focusable', 'false');
+      s.innerHTML = `<path d="${d}"${filled ? ' class="f"' : ''}/>`;
+    }
+  },
+  /** Dibuja un icono en un lienzo, centrado en (x, y) y con `size` píxeles de lado. */
+  draw(c, name, x, y, size, color, width = 2.2) {
+    const [d, filled] = this.PATHS[name] ?? this.PATHS.blocks;
+    let p = this._path2d.get(name);
+    if (!p) { p = new Path2D(d); this._path2d.set(name, p); }
+    c.save();
+    c.translate(x - size / 2, y - size / 2);
+    c.scale(size / 24, size / 24);
+    c.lineWidth = width; c.lineCap = 'round'; c.lineJoin = 'round';
+    c.strokeStyle = color; c.fillStyle = color;
+    if (filled) c.fill(p);
+    c.stroke(p);
+    c.restore();
+  },
+};
+icons.hydrate();
+
+/* ==========================================================================
+ * feedback — respuesta háptica y sonora (visor)
+ * ========================================================================== */
+
+const feedback = {
+  ctx: null,
+  /** Pulso suave en el mando (si lo hay) y un clic corto; más marcado al coger. */
+  pulse(source, strong = false) {
+    try { source?.gamepad?.hapticActuators?.[0]?.pulse?.(strong ? 0.5 : 0.25, strong ? 35 : 20); } catch { /* sin háptica */ }
+    this.click(strong ? 660 : 520);
+  },
+  click(freq) {
+    try {
+      this.ctx ??= new AudioContext();
+      const c = this.ctx, t = c.currentTime, o = c.createOscillator(), g = c.createGain();
+      o.type = 'sine'; o.frequency.value = freq;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.06, t + 0.005);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.07);
+      o.connect(g).connect(c.destination);
+      o.start(t); o.stop(t + 0.08);
+    } catch { /* sin audio */ }
   },
 };
 
@@ -1918,6 +2151,10 @@ const ar = {
  * fichas «repetir» y «si hay obstáculo» abren un paréntesis que cierra la
  * ficha «)»; si falta, se cierra solo al final. Cualquier tira es válida.
  * ========================================================================== */
+
+/** Paleta de fichas, por grupos, en el orden en que se muestra en todos los paneles. */
+const PALETTE = [['Mover', ['walk', 'backward', 'turnL', 'turnR']], ['Acciones', ['hello', 'jump', 'dance', 'pushUp']],
+  ['Control', ['repeat', 'end', 'wait', 'ifObstacle', 'speed']]];
 
 const program = {
   MAX: 18,
@@ -1971,7 +2208,41 @@ const program = {
   },
 
   /** Tras editar: detiene la ejecución en curso, guarda y avisa. */
-  edited() { this.halt(); this.save(); this.changed(); },
+  edited() { this.undo = null; this.halt(); this.save(); this.changed(); },
+
+  /** Programa borrado con «Todo», que se puede recuperar durante unos segundos. */
+  undo: null,
+  UNDO_MS: 8000,
+  get canUndo() { return !!this.undo && performance.now() < this.undo.until; },
+  restore() {
+    if (!this.canUndo) return;
+    this.tokens = this.undo.tokens; this.selected = -1;
+    this.edited();
+  },
+
+  /**
+   * Corchetes de las fichas que abren («repetir», «si hay obstáculo»): desde la
+   * ficha que abre hasta su cierre, o hasta la última ficha si no lo tiene.
+   * `depth` es el anidamiento (0, el más externo). Misma regla que `order()`.
+   */
+  brackets(tokens = this.tokens) {
+    const out = [], stack = [];
+    tokens.forEach((tok, i) => {
+      if (this.TYPES[tok.type].open) { stack.push(out.length); out.push({ from: i, to: -1, depth: stack.length - 1, closed: false }); }
+      else if (tok.type === 'end' && stack.length) { const b = out[stack.pop()]; b.to = i; b.closed = true; }
+    });
+    for (const b of out) if (b.to < 0) b.to = tokens.length - 1;
+    return out;
+  },
+
+  /** Tramos de corchete bajo cada ficha: [{ depth, start, end, open }] por índice, y la profundidad máxima. */
+  bracketRows(tokens = this.tokens) {
+    const rows = tokens.map(() => []), list = this.brackets(tokens);
+    for (const b of list) {
+      for (let i = b.from; i <= b.to; i++) rows[i].push({ depth: b.depth, start: i === b.from, end: i === b.to && b.closed, open: i === b.to && !b.closed });
+    }
+    return { rows, depth: list.reduce((m, b) => Math.max(m, b.depth + 1), 0) };
+  },
 
   add(type) {
     if (this.tokens.length >= this.MAX) return;
@@ -1993,7 +2264,15 @@ const program = {
     tok.n = Math.min(max, Math.max(1, tok.n + d));
     this.edited();
   },
-  clear() { this.tokens = []; this.selected = -1; this.edited(); },
+  /** Borra el programa; «Deshacer» lo recupera durante UNDO_MS. */
+  clear() {
+    if (!this.tokens.length) return;
+    const old = this.tokens;
+    this.tokens = []; this.selected = -1;
+    this.edited();
+    this.undo = { tokens: old, until: performance.now() + this.UNDO_MS };
+    setTimeout(() => this.changed(), this.UNDO_MS + 50);
+  },
   /** Quita la ficha seleccionada o, si no hay ninguna, la última. */
   backspace() {
     if (!this.tokens.length) return;
@@ -2139,11 +2418,15 @@ const program = {
  * - Modo 3D: flota sobre el robot. Se toca con el ratón o el dedo.
  * - Visor: flota a un lado (el de la mano dominante) y acompaña a la cabeza.
  *   Se pulsa con el índice o apuntando y pellizcando; el asa de debajo lo mueve.
+ *   Junto al asa, un botón redondo lo recoge; recogido, queda ese botón en su
+ *   sitio, que lo vuelve a abrir (también la palma de la otra mano hacia la cara).
  * En la AR del móvil, el panel es HTML fijo en la pantalla (ver `dock`).
+ * Para lectores de pantalla y teclado, cada zona del lienzo tiene un botón
+ * equivalente en un árbol HTML oculto (#a11yBlocks).
  * ========================================================================== */
 
 const blockPanel = {
-  W: 1024, H: 800,
+  W: 1024, H: 840,
   canvas: null, ctx: null, mesh: null,
   /** Zonas pulsables del último dibujo: { x, y, w, h, run }. */
   zones: [],
@@ -2155,8 +2438,17 @@ const blockPanel = {
   raycaster: new THREE.Raycaster(),
   /** Rayo y punto con los que se apunta desde el visor. */
   pointer: new THREE.Group(),
-  COLORS: { move: '#2f7fe6', act: '#f08a24', ctl: '#e9cc1c' },
+  COLORS: { move: theme.move, act: theme.act, ctl: theme.ctl },
   HANDLE_COLOR: 0xc9d1db,
+  /** Botón redondo del visor: recoge el panel y, recogido, lo vuelve a abrir. */
+  toggle: null,
+  toggleDrawn: null,
+  toggleArmed: true,
+  /** Árbol accesible: contenedor, estado dibujado y zona con el foco del teclado. */
+  a11y: document.getElementById('a11yBlocks'),
+  a11yState: '',
+  focusKey: null,
+  rebuilding: false,
   /** Panel flotante del visor: ancho (m) y posición por defecto respecto a la cabeza (x al lado dominante). */
   FLOAT: { width: 0.3, side: 0.3, drop: -0.12, ahead: -0.5 },
   handle: null,
@@ -2197,6 +2489,29 @@ const blockPanel = {
     this.handle.visible = false;
     scene.add(this.handle);
 
+    // Botón para recoger y volver a abrir el panel (visor)
+    const toggleMap = new THREE.CanvasTexture(Object.assign(document.createElement('canvas'), { width: 128, height: 128 }));
+    toggleMap.colorSpace = THREE.SRGBColorSpace;
+    this.toggle = new THREE.Mesh(new THREE.CircleGeometry(0.02, 32),
+      new THREE.MeshBasicMaterial({ map: toggleMap, transparent: true, side: THREE.DoubleSide, toneMapped: false }));
+    this.toggle.visible = false; this.toggle.renderOrder = 5;
+    scene.add(this.toggle);
+
+    // Árbol accesible: el foco del teclado se marca también en el lienzo
+    this.a11y.addEventListener('focusin', (e) => {
+      const key = e.target.dataset?.key;
+      if (!this.rebuilding && key && key !== this.focusKey) { this.focusKey = key; this.dirty = true; }
+    });
+    this.a11y.addEventListener('focusout', () => {
+      if (!this.rebuilding && this.focusKey) { this.focusKey = null; this.dirty = true; }
+    });
+    this.a11y.addEventListener('click', (e) => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      if (b.dataset.key === 'show') { this.setHidden(false); return; }
+      this.zones.find((z) => z.key === b.dataset.key)?.run();
+    });
+
     this.robotHit = new THREE.Mesh(new THREE.BoxGeometry(0.085, 0.06, 0.095), new THREE.MeshBasicMaterial({ visible: false }));
     this.robotHit.position.y = 0.015;
     robot.root.add(this.robotHit);
@@ -2226,6 +2541,10 @@ const blockPanel = {
       const hit = this.raycaster.intersectObject(this.handle, false)[0];
       if (hit) return { handle: true, hit };
     }
+    if (this.toggle.visible) {
+      const hit = this.raycaster.intersectObject(this.toggle, false)[0];
+      if (hit) return { toggle: true, hit };
+    }
     if (!robot.legs.length || !placement.visible) return null;
     const hit = this.raycaster.intersectObject(this.robotHit)[0];
     return hit ? { panel: false, hit } : null;
@@ -2239,7 +2558,8 @@ const blockPanel = {
     const t = this.target();
     if (!t) return false;
     if (t.handle) return true;
-    if (!t.panel) { this.hidden = !this.hidden; this.dirty = true; return true; }
+    if (t.toggle) { this.setHidden(!this.hidden); feedback.click(560); return true; }
+    if (!t.panel) { this.setHidden(!this.hidden); return true; }
     this.press(t.hit.uv.x * this.W, (1 - t.hit.uv.y) * this.H);
     return true;
   },
@@ -2297,6 +2617,7 @@ const blockPanel = {
     this.drag = { source: event.inputSource, distance: hit.distance };
     this.grip.copy(hit.point);
     this.gripOffset.subVectors(this.mesh.position, hit.point);
+    feedback.pulse(event.inputSource, true);
   },
 
   /** Coge el asa con un pellizco hecho junto a ella (a menos de 6 cm). */
@@ -2306,12 +2627,14 @@ const blockPanel = {
     this.drag = { hand };
     this.grip.copy(point);
     this.gripOffset.subVectors(this.mesh.position, point);
+    feedback.pulse(null, true);
     return true;
   },
 
   /** Suelta el asa: el panel se queda donde está, en el marco que sigue a la cabeza. */
   endDrag(now = performance.now()) {
     if (!this.drag) return;
+    feedback.pulse(this.drag.source, false);
     this.drag = null;
     this.dragEndedAt = now;
     const f = this.follow;
@@ -2323,6 +2646,14 @@ const blockPanel = {
     this.offset = o.clone();
   },
 
+  /** Muestra u oculta el panel (en el móvil, lo amplía o lo reduce). */
+  setHidden(on) {
+    if (this.hidden === on) return;
+    this.hidden = on; this.dirty = true;
+    // Al reaparecer, el dedo que lo ha abierto no debe pulsar nada sin retirarse antes
+    if (!on) this.pokeArmed = false;
+  },
+
   /**
    * Sitúa el panel. En el visor flota al lado de la mano dominante y sigue a la
    * cabeza con retraso; en el modo 3D, sobre el robot, de cara a la cámara y con
@@ -2331,16 +2662,20 @@ const blockPanel = {
   update() {
     const base = robot.legs.length > 0 && (!ar.session || ar.placed);
     const docked = !!ar.session && platform.handheld;
+    const floating = base && !!ar.session && !docked;
     const visible = base && !docked && !this.hidden;
     this.mesh.visible = visible;
-    this.handle.visible = visible && !!ar.session;
+    this.handle.visible = visible && floating;
+    this.toggle.visible = floating;
     dock.show(base && docked);
     if (this.dirty && (visible || dock.shown)) {
       if (dock.shown) dock.render(); else this.draw();
       this.dirty = false;
     }
-    if (!visible) { if (this.drag) this.endDrag(); return; }
-    if (ar.session) { this.float(); return; }
+    this.syncA11y(base && !ar.session ? (visible ? 'panel' : 'hidden') : '');
+    if (!visible && this.drag) this.endDrag();
+    if (floating) { this.float(); return; }
+    if (!visible) return;
     camera.getWorldPosition(_p);
     robot.root.getWorldPosition(_q);
     const width = Math.min(0.9, Math.max(0.26, 0.36 * _p.distanceTo(_q)));
@@ -2353,7 +2688,7 @@ const blockPanel = {
    * Visor: el panel flota delante, del lado de la mano dominante, y acompaña a
    * la cabeza sin seguir cada pequeño movimiento: la posición, con suavidad; el
    * rumbo, solo cuando la cabeza se ha girado más de 25°. Con el asa cogida, va
-   * donde la lleve el agarre.
+   * donde la lleve el agarre. Recogido, en su sitio queda solo el botón redondo.
    */
   float() {
     const now = performance.now(), f = this.follow;
@@ -2377,9 +2712,43 @@ const blockPanel = {
       this.mesh.position.copy(o).applyAxisAngle(_Y, f.yaw).add(f.pos);
     }
     this.mesh.lookAt(head);
-    // El asa, centrada bajo el panel y en su mismo plano
+    this.drawToggle();
+    this.toggle.quaternion.copy(this.mesh.quaternion);
+    if (this.hidden) {
+      this.toggle.scale.setScalar(1.4);
+      this.toggle.position.copy(this.mesh.position);
+      return;
+    }
+    // El asa, centrada bajo el panel y en su mismo plano; el botón de recoger, a su derecha
     this.handle.quaternion.copy(this.mesh.quaternion);
     this.handle.position.set(0, -(half + gap), 0).applyQuaternion(this.mesh.quaternion).add(this.mesh.position);
+    this.toggle.scale.setScalar(1);
+    this.toggle.position.set(0.105, -(half + gap), 0).applyQuaternion(this.mesh.quaternion).add(this.mesh.position);
+  },
+
+  /** Dibujo del botón redondo: «−» con el panel abierto; recogido, el icono de las fichas sobre el color de acento. */
+  drawToggle() {
+    if (this.toggleDrawn === this.hidden) return;
+    this.toggleDrawn = this.hidden;
+    const map = this.toggle.material.map, c = map.image.getContext('2d');
+    c.clearRect(0, 0, 128, 128);
+    c.fillStyle = this.hidden ? theme.accent : theme.control;
+    c.beginPath(); c.arc(64, 64, 62, 0, 2 * Math.PI); c.fill();
+    c.strokeStyle = this.hidden ? '#1a1d00' : theme.lineStrong; c.lineWidth = 4; c.stroke();
+    icons.draw(c, this.hidden ? 'blocks' : 'minus', 64, 64, 70, this.hidden ? '#1a1d00' : '#ffffff', 2.6);
+    map.needsUpdate = true;
+  },
+
+  /** Pulsación del botón redondo con la yema del índice (se rearma al retirarse 5 cm). */
+  pokeToggle(tip) {
+    if (!this.toggle.visible) { this.toggleArmed = true; return false; }
+    const d = tip.distanceTo(this.toggle.position);
+    if (d > 0.05) { this.toggleArmed = true; return false; }
+    if (!this.toggleArmed || d > 0.02 * this.toggle.scale.x + 0.005) return false;
+    this.toggleArmed = false;
+    this.setHidden(!this.hidden);
+    feedback.click(560);
+    return true;
   },
 
   /** Pulsa la zona que haya en el punto (x, y) del lienzo. */
@@ -2406,94 +2775,159 @@ const blockPanel = {
     return true;
   },
 
+  /**
+   * Dibuja el panel: controles (icono y texto), programa (con los corchetes de
+   * repetir y de si hay obstáculo), edición de la ficha seleccionada y paleta.
+   * Cada zona pulsable lleva su etiqueta para el árbol accesible.
+   */
   draw() {
-    const c = this.ctx, W = this.W, H = this.H, T = program.TYPES;
-    const font = (px, bold = false) => `${bold ? 'bold ' : ''}${px}px system-ui, "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
+    const c = this.ctx, W = this.W, H = this.H, T = program.TYPES, C = theme;
+    const font = (px, bold = false) => `${bold ? 'bold ' : ''}${px}px system-ui, "Segoe UI", Roboto, sans-serif`;
     this.zones = [];
-    const zone = (x, y, w, h, run) => this.zones.push({ x, y, w, h, run });
-    const box = (x, y, w, h, fill, r = 16) => { c.fillStyle = fill; c.beginPath(); c.roundRect(x, y, w, h, r); c.fill(); };
-    const label = (text, x, y, px, color = '#f1f4f8', bold = false, align = 'center') => {
-      c.fillStyle = color; c.font = font(px, bold); c.textAlign = align; c.textBaseline = 'middle'; c.fillText(text, x, y);
+    const zone = (x, y, w, h, run, label, key) => this.zones.push({ x, y, w, h, run, label, key });
+    const box = (x, y, w, h, fill, r = 16, border = null) => {
+      c.fillStyle = fill; c.beginPath(); c.roundRect(x, y, w, h, r); c.fill();
+      if (border) { c.strokeStyle = border; c.lineWidth = 2; c.stroke(); }
+    };
+    const label = (text, x, y, px, color = C.text, bold = false, align = 'center', maxWidth = undefined) => {
+      c.fillStyle = color; c.font = font(px, bold); c.textAlign = align; c.textBaseline = 'middle'; c.fillText(text, x, y, maxWidth);
     };
     c.clearRect(0, 0, W, H);
-    box(0, 0, W, H, 'rgba(18,22,28,0.9)', 28);
+    box(0, 0, W, H, 'rgba(22,27,34,0.94)', 24);
 
     // Controles
     const busy = program.running;
+    const home = () => { program.stop(); if (physics.ready) physics.reset(); };
     const controls = [
-      [busy ? '▶ Activo' : program.paused ? '▶ Seguir' : '▶ Ejecutar', '#2e9e5b', () => { this.hidden = true; program.run(); }],
-      ['⏭ Paso', '#3d4654', () => program.step()],
-      ['■ Parar', '#c0463c', () => program.stop()],
-      ['⌫ Quitar', '#3d4654', () => program.backspace()],
-      ['🗑 Todo', '#3d4654', () => program.clear()],
-      ar.session ? ['📍 Mover', '#3d4654', () => ar.unplace()] : ['⟲ Inicio', '#3d4654', () => { program.stop(); if (physics.ready) physics.reset(); }],
+      ['play', busy ? 'Activo' : program.paused ? 'Seguir' : 'Ejecutar', C.go, () => { this.setHidden(true); program.run(); }, 'Ejecutar el programa', 'run'],
+      ['step', 'Paso', C.control, () => program.step(), 'Ejecutar una ficha', 'step'],
+      ['stop', 'Parar', C.halt, () => program.stop(), 'Parar', 'stop'],
+      ['backspace', 'Quitar', C.control, () => program.backspace(), 'Quitar la ficha seleccionada o la última', 'backspace'],
+      program.canUndo ? ['undo', 'Deshacer', C.accent, () => program.restore(), 'Deshacer: recuperar el programa borrado', 'undo']
+        : ['trash', 'Todo', C.control, () => program.clear(), 'Borrar todo el programa', 'clear'],
+      ar.session ? ['pin', 'Mover', C.control, () => ar.unplace(), 'Recolocar el robot', 'place']
+        : ['reset', 'Inicio', C.control, home, 'Volver al punto de partida', 'home'],
     ];
-    controls.forEach(([text, color, run], k) => {
-      const x = 20 + k * 166, w = 158;
-      box(x, 16, w, 92, color);
-      label(text, x + w / 2, 62, 27, '#ffffff', true);
-      zone(x, 16, w, 92, run);
+    controls.forEach(([ico, text, color, run, a11y, key], k) => {
+      const x = 20 + k * 166, w = 158, ink = color === C.accent ? '#1a1d00' : '#ffffff';
+      box(x, 16, w, 92, color, 16, color === C.control ? C.lineStrong : null);
+      icons.draw(c, ico, x + w / 2, 47, 38, ink, 2.4);
+      label(text, x + w / 2, 89, 23, ink, true, 'center', w - 12);
+      zone(x, 16, w, 92, run, a11y, key);
     });
 
-    // Programa
-    box(20, 124, W - 40, 212, 'rgba(255,255,255,0.06)');
+    // Programa, con los corchetes bajo las fichas que abarcan «repetir» y «si hay obstáculo»
+    box(20, 124, W - 40, 252, 'rgba(255,255,255,0.06)', 24);
     const tile = (tok, x, y, size, outline) => {
-      const def = T[tok.type];
-      box(x, y, size, size, this.COLORS[def.group], 14);
-      const dark = def.group === 'ctl';
-      const glyph = tok.type === 'speed' ? ['🐢', '▶', '🐇'][tok.n - 1] : def.glyph + (def.open ? '(' : '');
-      label(glyph, x + size / 2, y + size / 2 - (def.max && tok.type !== 'speed' ? 6 : 0), def.open ? size * 0.42 : size * 0.52, dark ? '#1b1b1d' : '#ffffff', true);
-      if (def.max && tok.type !== 'speed') {
+      const def = T[tok.type], ink = def.group === 'ctl' ? C.ctlInk : '#ffffff';
+      const num = def.max && tok.type !== 'speed';
+      box(x, y, size, size, this.COLORS[def.group], 16);
+      icons.draw(c, icons.token(tok), x + size / 2, y + size / 2 - (num ? 7 : 0), size * 0.56, ink, 2.6);
+      if (num) {
         const bw = tok.n > 9 ? 44 : 30;
-        box(x + size - bw - 4, y + size - 34, bw, 30, 'rgba(0,0,0,0.55)', 8);
+        box(x + size - bw - 4, y + size - 34, bw, 30, 'rgba(0,0,0,0.6)', 8);
         label(String(tok.n), x + size - bw / 2 - 4, y + size - 18, 24, '#ffffff', true);
       }
-      if (outline) { c.strokeStyle = outline; c.lineWidth = 6; c.beginPath(); c.roundRect(x - 2, y - 2, size + 4, size + 4, 16); c.stroke(); }
+      if (outline) { c.strokeStyle = outline; c.lineWidth = 6; c.beginPath(); c.roundRect(x - 4, y - 4, size + 8, size + 8, 18); c.stroke(); }
     };
-    if (!program.tokens.length) label('Toca las fichas de abajo para crear el programa', W / 2, 230, 30, '#9aa4b2');
+    const { rows, depth } = program.bracketRows(), D = Math.min(depth, 3);
+    if (!program.tokens.length) label('Toca las fichas de la paleta para crear el programa', W / 2, 250, 30, C.muted);
     program.tokens.forEach((tok, i) => {
-      const x = 32 + (i % 9) * 108, y = 134 + Math.floor(i / 9) * 100;
-      tile(tok, x, y, 92, i === program.active ? '#ffffff' : i === program.selected ? '#35e0ff' : null);
-      zone(x, y, 92, 92, () => { program.selected = program.selected === i ? -1 : i; this.dirty = true; });
+      const x = 32 + (i % 9) * 108, y = 136 + Math.floor(i / 9) * 116, s = 92;
+      for (const b of rows[i]) {
+        const yb = y + s + 6 + (D - 1 - Math.min(b.depth, D - 1)) * 6;
+        const x0 = b.start ? x + 14 : x - 8, x1 = b.end ? x + s - 14 : x + s + 8;
+        c.strokeStyle = C.ctl; c.lineWidth = 5; c.lineCap = 'round'; c.lineJoin = 'round';
+        c.setLineDash(b.open ? [10, 9] : []);
+        c.beginPath();
+        if (b.start) { c.moveTo(x0, y + s - 2); c.lineTo(x0, yb); } else c.moveTo(x0, yb);
+        c.lineTo(x1, yb);
+        if (b.end) c.lineTo(x1, y + s - 2);
+        c.stroke();
+        c.setLineDash([]);
+      }
+      tile(tok, x, y, s, i === program.active ? '#ffffff' : i === program.selected ? C.sel : null);
+      const def = T[tok.type];
+      zone(x, y, s, s, () => { program.selected = program.selected === i ? -1 : i; this.dirty = true; },
+        `Ficha ${i + 1}: ${def.name}${def.max && tok.type !== 'speed' ? ` ${tok.n}` : ''}${i === program.selected ? ' (seleccionada)' : ''}`, `tok${i}`);
     });
 
     // Edición de la ficha seleccionada
     const sel = program.tokens[program.selected];
     if (sel) {
-      const def = T[sel.type];
-      const buttons = [];
+      const def = T[sel.type], i = program.selected, buttons = [];
+      const B = (w, text, icon, run, a11y, key) => buttons.push({ w, text, icon, run, a11y, key });
       if (def.max) {
         const big = def.max > 9; // números grandes: también de diez en diez
-        if (big) buttons.push(['−10', () => program.bump(program.selected, -10)]);
-        buttons.push(['−', () => program.bump(program.selected, -1)], [String(sel.n), null], ['+', () => program.bump(program.selected, 1)]);
-        if (big) buttons.push(['+10', () => program.bump(program.selected, 10)]);
+        if (big) B(112, '−10', null, () => program.bump(i, -10), 'Restar 10', 'bm10');
+        B(84, null, 'minus', () => program.bump(i, -1), 'Restar 1', 'bm1');
+        B(84, String(sel.n), null, null);
+        B(84, null, 'plus', () => program.bump(i, 1), 'Sumar 1', 'bp1');
+        if (big) B(112, '+10', null, () => program.bump(i, 10), 'Sumar 10', 'bp10');
       }
-      buttons.push(['◀', () => program.move(program.selected, -1)], ['▶', () => program.move(program.selected, 1)], ['✕ Quitar', () => program.remove(program.selected)]);
-      label(def.name, 32, 386, def.max > 9 ? 22 : 30, '#f1f4f8', true, 'left');
+      B(84, null, 'left', () => program.move(i, -1), 'Mover a la izquierda', 'ml');
+      B(84, null, 'right', () => program.move(i, 1), 'Mover a la derecha', 'mr');
+      B(84, null, 'close', () => program.remove(i), 'Quitar la ficha', 'rm');
       let x = W - 20;
-      for (const [text, run] of buttons.slice().reverse()) {
-        const w = text.length > 3 ? 190 : text.length === 3 ? 112 : 84;
-        x -= w;
-        if (run) { box(x, 348, w - 8, 76, '#3d4654'); zone(x, 348, w - 8, 76, run); }
-        label(text, x + (w - 8) / 2, 386, 36, '#ffffff', true);
+      for (const b of buttons.slice().reverse()) {
+        x -= b.w;
+        const w = b.w - 8;
+        if (b.run) { box(x, 392, w, 76, C.control, 16, C.lineStrong); zone(x, 392, w, 76, b.run, b.a11y, b.key); }
+        if (b.icon) icons.draw(c, b.icon, x + w / 2, 430, 40, '#ffffff', 2.6);
+        else label(b.text, x + w / 2, 430, 34, '#ffffff', true);
       }
-    } else label('Toca una ficha del programa para cambiarla', W / 2, 386, 28, '#9aa4b2');
+      label(def.name, 32, 430, 28, C.text, true, 'left', x - 48);
+    } else label('Toca una ficha del programa para cambiarla', W / 2, 430, 28, C.muted);
 
     // Paleta
-    const rows = [['Mover', ['walk', 'backward', 'turnL', 'turnR']], ['Acciones', ['hello', 'jump', 'dance', 'pushUp']], ['Control', ['repeat', 'end', 'wait', 'ifObstacle', 'speed']]];
     const full = program.tokens.length >= program.MAX;
-    rows.forEach(([name, types], r) => {
-      const y = 440 + r * 118;
-      label(name, 32, y + 50, 30, '#9aa4b2', false, 'left');
+    PALETTE.forEach(([name, types], r) => {
+      const y = 488 + r * 118;
+      label(name, 32, y + 50, 30, C.muted, false, 'left');
       types.forEach((type, k) => {
         const x = 200 + k * 116;
         c.globalAlpha = full ? 0.35 : 1;
         tile({ type, n: T[type].n ?? 1 }, x, y, 100, null);
         c.globalAlpha = 1;
-        zone(x, y, 100, 100, () => program.add(type));
+        zone(x, y, 100, 100, () => program.add(type), `Añadir ${T[type].name}`, `add-${type}`);
       });
     });
+
+    // Foco del teclado (árbol accesible)
+    const focused = this.focusKey && this.zones.find((z) => z.key === this.focusKey);
+    if (focused) {
+      c.strokeStyle = C.sel; c.lineWidth = 6; c.setLineDash([]);
+      c.beginPath(); c.roundRect(focused.x - 6, focused.y - 6, focused.w + 12, focused.h + 12, 20); c.stroke();
+    }
     this.mesh.material.map.needsUpdate = true;
+    if (this.a11yState === 'panel') this.buildA11y();
+  },
+
+  /** Rehace el árbol accesible con las zonas del último dibujo, conservando el foco. */
+  buildA11y() {
+    const focused = this.a11y.contains(document.activeElement) ? document.activeElement.dataset.key : null;
+    this.rebuilding = true;
+    this.a11y.replaceChildren(...this.zones.filter((z) => z.label).map((z) => {
+      const b = Object.assign(document.createElement('button'), { type: 'button', textContent: z.label });
+      b.dataset.key = z.key;
+      return b;
+    }));
+    if (focused) (this.a11y.querySelector(`[data-key="${focused}"]`) ?? this.a11y.querySelector('button'))?.focus();
+    this.rebuilding = false;
+  },
+
+  /** Árbol accesible según el estado: el panel ('panel'), un botón para mostrarlo ('hidden') o nada (''). */
+  syncA11y(state) {
+    if (state === this.a11yState) return;
+    this.a11yState = state;
+    if (state === 'panel') { this.buildA11y(); return; }
+    const kids = [];
+    if (state === 'hidden') {
+      const b = Object.assign(document.createElement('button'), { type: 'button', textContent: 'Mostrar el panel de fichas' });
+      b.dataset.key = 'show';
+      kids.push(b);
+    }
+    this.a11y.replaceChildren(...kids);
   },
 };
 blockPanel.init();
@@ -2502,29 +2936,41 @@ program.load();
 /* ==========================================================================
  * dock — panel de fichas del móvil en AR
  *
- * HTML fijo en la pantalla (en la capa DOM de la sesión AR), en el tercio
- * inferior y del lado de la mano dominante, para no tapar el robot ni moverse
- * con él. Tres páginas apiladas, con una lengüeta cada una: Programa, Fichas y
- * Ejecutar. ▾ lo recoge a solo las lengüetas (también al ejecutar, y al tocar
- * el robot). Recogido = `blockPanel.hidden`.
+ * HTML fijo en la pantalla (en la capa DOM de la sesión AR), abajo y del lado
+ * de la mano dominante. Es un cajón con dos alturas:
+ * - Reducido (`blockPanel.hidden`): estrecho, con Ejecutar, Paso y Parar y la
+ *   tira del programa. Así queda al ejecutar, para no tapar el robot.
+ * - Ampliado: ocupa el ancho; añade Quitar y Todo (o Deshacer), la paleta y,
+ *   con una ficha seleccionada, su barra de edición fija al pie.
+ * La cabecera lo amplía o reduce con un toque o deslizando hacia arriba o abajo.
  * ========================================================================== */
 
 const dock = {
   el: document.getElementById('blocks'),
-  TABS: [['program', 'Programa'], ['palette', 'Fichas'], ['run', 'Ejecutar']],
-  tab: 'palette',
   shown: false,
   /** Último toque en el panel: el toque no debe llegar a la escena (colocar o recoger). */
   touchedAt: 0,
+  /** Deslizamiento en la cabecera: posición inicial y si ya se ha resuelto como gesto. */
+  swipe: null,
 
   init() {
-    try { const t = localStorage.getItem('kamear.pestana'); if (this.TABS.some(([id]) => id === t)) this.tab = t; } catch { /* sin almacenamiento */ }
     this.el.addEventListener('beforexrselect', (e) => e.preventDefault());
-    this.el.addEventListener('pointerdown', () => { this.touchedAt = performance.now(); });
+    this.el.addEventListener('pointerdown', (e) => {
+      this.touchedAt = performance.now();
+      if (e.target.closest('.grab')) this.swipe = { y: e.clientY, done: false };
+    });
+    this.el.addEventListener('pointerup', (e) => {
+      const s = this.swipe;
+      if (!s) return;
+      const dy = e.clientY - s.y;
+      if (Math.abs(dy) > 24) { s.done = true; this.expand(dy < 0); }
+    });
     this.el.addEventListener('click', (e) => {
       this.touchedAt = performance.now();
+      const swiped = this.swipe?.done;
+      this.swipe = null;
       const b = e.target.closest('[data-act]');
-      if (b && !b.disabled) this.act(b.dataset.act, b.dataset.arg);
+      if (b && !b.disabled && !(swiped && b.dataset.act === 'fold')) this.act(b.dataset.act, b.dataset.arg);
     });
   },
 
@@ -2532,101 +2978,127 @@ const dock = {
     if (on === this.shown) return;
     this.shown = on;
     this.el.hidden = !on;
-    if (!on) { document.documentElement.classList.remove('dock-left'); return; }
-    this.render();
+    if (on) this.render();
   },
+
+  expand(on) { blockPanel.setHidden(!on); },
 
   act(name, arg) {
     const i = program.selected;
     switch (name) {
-      case 'tab':
-        // La lengüeta de la página abierta recoge el panel; cualquier otra lo abre en su página
-        if (arg === this.tab && !blockPanel.hidden) blockPanel.hidden = true;
-        else { this.tab = arg; blockPanel.hidden = false; }
-        try { localStorage.setItem('kamear.pestana', this.tab); } catch { /* sin almacenamiento */ }
-        break;
-      case 'fold': blockPanel.hidden = !blockPanel.hidden; break;
+      case 'fold': blockPanel.setHidden(!blockPanel.hidden); break;
       case 'add': program.add(arg); break;
-      case 'sel': program.selected = program.selected === +arg ? -1 : +arg; break;
+      // Tocar una ficha de la tira reducida amplía el panel para editarla
+      case 'sel': program.selected = program.selected === +arg ? -1 : +arg; if (program.selected >= 0) this.expand(true); break;
       case 'bump': program.bump(i, +arg); break;
       case 'move': program.move(i, +arg); break;
       case 'remove': program.remove(i); break;
       case 'backspace': program.backspace(); break;
       case 'clear': program.clear(); break;
-      case 'run': blockPanel.hidden = true; program.run(); break;
+      case 'undo': program.restore(); break;
+      case 'run': blockPanel.setHidden(true); program.run(); break;
       case 'step': program.step(); break;
       case 'stop': program.stop(); break;
-      case 'place': ar.unplace(); break;
     }
     blockPanel.dirty = true;
   },
 
   render() {
-    const T = program.TYPES, side = hands.dominant === 'left' ? 'left' : 'right';
+    const T = program.TYPES, expanded = !blockPanel.hidden;
     const el = (tag, { data, ...props } = {}, ...kids) => {
       const n = Object.assign(document.createElement(tag), props);
       for (const [k, v] of Object.entries(data ?? {})) n.dataset[k] = v;
       n.append(...kids);
       return n;
     };
-    const button = (text, act, arg, props = {}) => el('button', { type: 'button', textContent: text, ...props, data: { act, ...(arg !== undefined && { arg }) } });
-    const tile = (tok, act, arg, cls = '') => {
-      const def = T[tok.type];
-      const glyph = tok.type === 'speed' ? ['🐢', '▶', '🐇'][tok.n - 1] : def.glyph + (def.open ? '(' : '');
-      const b = button(glyph, act, arg, { className: `tile ${def.group} ${cls}`, title: def.name, ariaLabel: def.name });
-      if (def.max && tok.type !== 'speed') b.append(el('span', { className: 'n', textContent: tok.n }));
+    /** Botón con icono y texto; sin texto visible, la etiqueta va en aria-label. */
+    const button = (icon, text, act, arg, props = {}) => {
+      const b = el('button', { type: 'button', ...props, data: { act, ...(arg !== undefined && { arg }) } });
+      if (icon) b.append(icons.el(icon));
+      if (text) b.append(el('span', { className: 'lbl', textContent: text }));
+      if (!b.ariaLabel && text) b.ariaLabel = text;
+      return b;
+    };
+    const tile = (tok, act, arg, cls = '', brackets = []) => {
+      const def = T[tok.type], num = def.max && tok.type !== 'speed';
+      const name = def.name + (num ? ` ${tok.n}` : '');
+      const b = button(icons.token(tok), '', act, arg, { className: `tile ${def.group} ${cls}`, title: name, ariaLabel: name });
+      if (num) b.append(el('span', { className: 'n', textContent: tok.n, ariaHidden: 'true' }));
+      for (const br of brackets) {
+        const span = el('span', { className: `br${br.start ? ' s' : ''}${br.end ? ' e' : ''}${br.open ? ' o' : ''}`, ariaHidden: 'true' });
+        span.style.setProperty('--o', `${4 + (this.depth - 1 - br.depth) * 5}px`);
+        b.append(span);
+      }
       return b;
     };
 
-    this.el.classList.toggle('left', side === 'left');
-    this.el.classList.toggle('collapsed', blockPanel.hidden);
-    document.documentElement.classList.toggle('dock-left', side === 'left');
-    const tabs = el('div', { className: 'tabs', role: 'tablist' },
-      ...this.TABS.map(([id, name]) => button(name, 'tab', id,
-        { role: 'tab', ariaSelected: String(id === this.tab && !blockPanel.hidden) })),
-      button(blockPanel.hidden ? '▴' : '▾', 'fold', undefined,
-        { className: 'fold', ariaLabel: blockPanel.hidden ? 'Mostrar el panel' : 'Recoger el panel', ariaExpanded: String(!blockPanel.hidden) }));
+    this.el.classList.toggle('left', hands.dominant === 'left');
+    this.el.classList.toggle('expanded', expanded);
 
-    const page = el('div', { className: 'page', role: 'tabpanel' });
-    if (this.tab === 'program') {
-      if (program.tokens.length) {
-        page.append(el('div', { className: 'grid' }, ...program.tokens.map((tok, i) =>
-          tile(tok, 'sel', i, i === program.active ? 'active' : i === program.selected ? 'sel' : ''))));
-      } else page.append(el('p', { className: 'hint', textContent: 'Programa vacío: añade fichas desde «Fichas».' }));
-      const sel = program.tokens[program.selected];
-      if (sel) {
-        const def = T[sel.type], buttons = el('div', { className: 'buttons' });
-        if (def.max) {
-          if (def.max > 9) buttons.append(button('−10', 'bump', -10));
-          buttons.append(button('−', 'bump', -1), el('output', { textContent: sel.n }), button('+', 'bump', 1));
-          if (def.max > 9) buttons.append(button('+10', 'bump', 10));
-        }
-        buttons.append(button('◀', 'move', -1, { ariaLabel: 'Mover a la izquierda' }), button('▶', 'move', 1, { ariaLabel: 'Mover a la derecha' }), button('✕ Quitar', 'remove'));
-        page.append(el('div', { className: 'edit' }, el('b', { textContent: def.name }), buttons));
-      } else if (program.tokens.length) page.append(el('p', { className: 'hint', textContent: 'Toca una ficha para cambiarla.' }));
-      page.append(el('div', { className: 'buttons' }, button('⌫ Quitar', 'backspace'), button('🗑 Todo', 'clear')));
-    } else if (this.tab === 'palette') {
-      const full = program.tokens.length >= program.MAX;
-      for (const [name, types] of [['Mover', ['walk', 'backward', 'turnL', 'turnR']], ['Acciones', ['hello', 'jump', 'dance', 'pushUp']],
-        ['Control', ['repeat', 'end', 'wait', 'ifObstacle', 'speed']]]) {
-        page.append(el('h4', { textContent: name }), el('div', { className: 'grid' }, ...types.map((type) => {
-          const b = tile({ type, n: T[type].n ?? 1 }, 'add', type);
-          b.disabled = full;
-          return b;
-        })));
-      }
-      if (full) page.append(el('p', { className: 'hint', textContent: `Programa lleno (${program.MAX} fichas).` }));
-    } else {
-      page.append(el('div', { className: 'run' },
-        button(program.running ? '▶ Activo' : program.paused ? '▶ Seguir' : '▶ Ejecutar', 'run', undefined, { className: 'go' }),
-        button('⏭ Paso', 'step'), button('■ Parar', 'stop', undefined, { className: 'halt' }),
-        button('📍 Mover el robot', 'place', undefined, { style: 'grid-column: 1 / -1' })));
+    // Cabecera: amplía o reduce
+    const grab = button(expanded ? 'down' : 'up', '', 'fold', undefined, {
+      className: 'grab', ariaExpanded: String(expanded), ariaLabel: expanded ? 'Reducir el panel de fichas' : 'Ampliar el panel de fichas' });
+    grab.prepend(el('span', { textContent: `Programa ${program.tokens.length}/${program.MAX}` }));
+
+    // Ejecución, siempre a la vista
+    const runbar = el('div', { className: 'runbar' },
+      button('play', program.running ? 'Activo' : program.paused ? 'Seguir' : 'Ejecutar', 'run', undefined, { className: 'go' }),
+      button('step', 'Paso', 'step'),
+      button('stop', 'Parar', 'stop', undefined, { className: 'halt' }));
+
+    // Programa (con sus corchetes), borrado y paleta
+    const body = el('div', { className: 'body' });
+    const { rows, depth } = program.bracketRows();
+    this.depth = Math.min(depth, 4);
+    if (program.tokens.length) {
+      const prog = el('div', { className: 'grid prog', role: 'group', ariaLabel: 'Programa' }, ...program.tokens.map((tok, i) =>
+        tile(tok, 'sel', i, i === program.active ? 'active' : i === program.selected ? 'sel' : '', rows[i])));
+      prog.style.setProperty('--depth', this.depth);
+      for (const t of prog.children) t.setAttribute('aria-pressed', String(t.classList.contains('sel')));
+      body.append(prog);
+    } else body.append(el('p', { className: 'hint', textContent: expanded ? 'Toca las fichas de abajo para crear el programa.' : 'Sin fichas: amplía el panel.' }));
+    const more = el('div', { className: 'more' });
+    more.append(el('div', { className: 'row2' },
+      button('backspace', 'Quitar', 'backspace', undefined, { title: 'Quita la ficha seleccionada o la última' }),
+      program.canUndo ? button('undo', 'Deshacer', 'undo', undefined, { className: 'undo' }) : button('trash', 'Todo', 'clear', undefined, { title: 'Borra todo el programa', disabled: !program.tokens.length })));
+    const full = program.tokens.length >= program.MAX;
+    for (const [name, types] of PALETTE) {
+      more.append(el('h4', { textContent: name }), el('div', { className: 'grid', role: 'group', ariaLabel: name }, ...types.map((type) => {
+        const b = tile({ type, n: T[type].n ?? 1 }, 'add', type);
+        b.ariaLabel = b.title = `Añadir ${T[type].name}`;
+        b.disabled = full;
+        return b;
+      })));
     }
-    // Al redibujar, la página conserva su desplazamiento (p. ej. al añadir fichas seguidas)
-    const old = this.el.querySelector('.page'), scroll = old && this.el.dataset.tab === this.tab ? old.scrollTop : 0;
-    this.el.dataset.tab = this.tab;
-    this.el.replaceChildren(tabs, page);
-    page.scrollTop = scroll;
+    if (full) more.append(el('p', { className: 'hint', textContent: `Programa lleno (${program.MAX} fichas).` }));
+    body.append(more);
+
+    // Edición de la ficha seleccionada, fija al pie
+    const kids = [grab, runbar, body];
+    const sel = program.tokens[program.selected];
+    if (sel) {
+      const def = T[sel.type], ctrls = el('div', { className: 'ctrls' });
+      if (def.max) {
+        if (def.max > 9) ctrls.append(button(null, '−10', 'bump', -10, { ariaLabel: 'Restar 10' }));
+        ctrls.append(button('minus', '', 'bump', -1, { ariaLabel: 'Restar 1' }), el('output', { textContent: sel.n, ariaLabel: 'Número' }),
+          button('plus', '', 'bump', 1, { ariaLabel: 'Sumar 1' }));
+        if (def.max > 9) ctrls.append(button(null, '+10', 'bump', 10, { ariaLabel: 'Sumar 10' }));
+      }
+      const top = el('div', { className: 'top' }, el('span', { className: 'name', textContent: def.name }),
+        button('left', '', 'move', -1, { ariaLabel: 'Mover a la izquierda' }), button('right', '', 'move', 1, { ariaLabel: 'Mover a la derecha' }),
+        button('close', '', 'remove', undefined, { ariaLabel: 'Quitar la ficha' }));
+      kids.push(el('div', { className: 'editbar', role: 'group', ariaLabel: `Editar ${def.name}` }, top, ...(def.max ? [ctrls] : [])));
+    }
+
+    // Al redibujar, el cuerpo conserva su desplazamiento (p. ej. al añadir fichas seguidas)
+    const old = this.el.querySelector('.body'), keep = old && this.el.dataset.mode === String(expanded);
+    const scroll = keep ? old.scrollTop : 0, strip = keep ? this.el.querySelector('.prog')?.scrollLeft ?? 0 : 0;
+    this.el.dataset.mode = String(expanded);
+    this.el.replaceChildren(...kids);
+    body.scrollTop = scroll;
+    const prog = this.el.querySelector('.prog');
+    // Reducido: la tira se desplaza hasta la ficha en curso (o la última)
+    if (prog && !expanded) prog.scrollLeft = program.active >= 0 ? prog.children[program.active].offsetLeft - 8 : keep ? strip : prog.scrollWidth;
   },
 };
 dock.init();
@@ -2635,7 +3107,7 @@ dock.init();
  * hands — manos en el visor
  *
  * - Mano no dominante: al volver la palma hacia la cara, el panel de fichas
- *   aparece sobre ella.
+ *   recogido vuelve a abrirse (gesto rápido para recuperarlo tras Ejecutar).
  * - Mano dominante: el índice pulsa las fichas; el pellizco junto al robot lo
  *   coge (y al soltar, lo deja caer o lo lanza).
  * - Las dos: yemas y palma son esferas sólidas que empujan al robot.
@@ -2699,7 +3171,7 @@ const hands = {
     const placed = robot.legs.length > 0 && placement.visible;
 
     // Palma de la mano no dominante hacia la cara (con histéresis para que no parpadee)
-    const nd = this.side[this.other];
+    const nd = this.side[this.other], wasPalm = this.palmShown;
     if (nd.tracked) {
       const w = nd.joints.wrist;
       const a = _p.subVectors(nd.joints['index-finger-metacarpal'], w), b = _q.subVectors(nd.joints['pinky-finger-metacarpal'], w);
@@ -2709,6 +3181,8 @@ const hands = {
       const facing = normal.dot(_p.subVectors(this.head, this.palm.center).normalize());
       this.palmShown = this.palmShown ? facing > 0.3 : facing > 0.55;
     } else this.palmShown = false;
+    // Gesto rápido: la palma hacia la cara abre el panel recogido (visor)
+    if (this.palmShown && !wasPalm && blockPanel.hidden && blockPanel.toggle.visible) { blockPanel.setHidden(false); feedback.click(560); }
 
     // Asa del panel flotante: un pellizco junto a ella (con cualquier mano) la coge
     for (const name of [this.dominant, this.other]) {
@@ -2731,7 +3205,7 @@ const hands = {
     if (this.grabbing) this.carry(dom.pinch);
 
     // Pulsar el panel con el índice de la mano dominante
-    if (dom.tracked && !this.grabbing && !blockPanel.drag) blockPanel.poke(dom.joints['index-finger-tip']);
+    if (dom.tracked && !this.grabbing && !blockPanel.drag && !blockPanel.pokeToggle(dom.joints['index-finger-tip'])) blockPanel.poke(dom.joints['index-finger-tip']);
 
     this.aim(placed);
   },
@@ -2876,7 +3350,9 @@ const help = {
   init() {
     document.getElementById('btnHelp').addEventListener('click', () => this.open());
     document.getElementById('btnHelpClose').addEventListener('click', () => this.close());
+    document.getElementById('btnArHelp').addEventListener('click', () => this.open());
     this.el.addEventListener('beforexrselect', (e) => e.preventDefault());
+    this.el.addEventListener('keydown', (e) => { if (e.key === 'Escape') this.close(); });
   },
   /** Instrucciones según el dispositivo. */
   device() {
@@ -2886,22 +3362,25 @@ const help = {
       `Apunta al suelo o a una mesa con la mano ${dom} y pellizca para colocar el robot.`,
       `El panel de fichas flota a tu ${dom} y te acompaña. Púlsalo con el índice, o apunta y pellizca.`,
       'Para cambiarlo de sitio, pellizca la barra que tiene debajo y llévalo donde quieras.',
+      `El botón redondo junto a la barra recoge el panel; al ejecutar se recoge solo. Para recuperarlo, pulsa ese botón (queda en su sitio) o vuelve la palma de la mano ${other} hacia ti.`,
       `Pellizca junto al robot con la mano ${dom} para cogerlo. Las dos manos lo empujan.`,
       `Un pellizco con la mano ${other} sale de la realidad aumentada.`,
     ]];
     if (platform.arSupported) return ['En realidad aumentada', [
       'Pulsa «Entrar en AR» y da permiso a la cámara.',
       'Mueve el móvil apuntando al suelo o a una mesa hasta ver el anillo amarillo, y toca para colocar el robot.',
-      `El panel de fichas queda abajo a la ${dom}. Sus lengüetas pasan de Programa a Fichas y a Ejecutar; ▾ lo recoge para ver mejor.`,
-      'El botón «Mover el robot» (en Ejecutar) permite recolocarlo.',
+      `El panel de fichas queda abajo a la ${dom}, reducido: Ejecutar, Paso, Parar y tu programa.`,
+      'Toca su cabecera, o desliza hacia arriba, para ampliarlo y ver la paleta; desliza hacia abajo para reducirlo.',
+      'Arriba a la derecha: el alfiler recoloca el robot, ? abre esta ayuda y ✕ sale de la realidad aumentada.',
     ]];
     if (platform.isIOS) return ['En iPhone', [
       'Safari no trae realidad aumentada en la web: la página pide abrir el visor de Variant Launch. Acepta su tarjeta («Abrir») para entrar con AR.',
       'Si no aparece la tarjeta, el robot se ve en modo 3D: arrastra para girar la vista y pellizca para acercarla.',
     ]];
     return ['En este navegador', [
-      'No hay realidad aumentada: el robot se ve en modo 3D.',
-      'Arrastra para girar la vista y usa la rueda para acercarla.',
+      'No hay realidad aumentada: el robot se ve en modo 3D, con el panel de fichas sobre él.',
+      'Arrastra para girar la vista y usa la rueda para acercarla. Con el teclado, Tab recorre las fichas y los botones del panel.',
+      'Las herramientas de ingeniería (servos, marchas, entorno y rendimiento) están plegadas al pie del panel de herramientas.',
       'Ábrelo en un móvil Android o en unas Meta Quest para verlo en tu habitación.',
     ]];
   },
@@ -2913,10 +3392,13 @@ const help = {
     const ol = document.createElement('ol');
     for (const step of steps) { const li = document.createElement('li'); li.textContent = step; ol.append(li); }
     host.append(h, ol);
+    this.returnFocus = document.activeElement;
     this.el.hidden = false;
+    document.getElementById('btnHelpClose').focus({ preventScroll: true });
   },
   close() {
     this.el.hidden = true;
+    this.returnFocus?.focus?.({ preventScroll: true });
     try { localStorage.setItem('kamear.ayuda', '1'); } catch { /* sin almacenamiento */ }
   },
   /** La primera vez se abre sola. */
@@ -2932,10 +3414,34 @@ help.init();
  * ui — panel de la fase 0: servos, posturas y vista previa de marchas
  * ========================================================================== */
 
-function setStatus(text, isError = false) {
+/**
+ * Indicador de estado. `kind`:
+ * - 'guide': instrucción que sigue vigente (colocar el robot, cargando); se queda.
+ * - 'info': aviso; se desvanece a los 6 s para no ocupar el centro de la pantalla.
+ * - 'error': se queda, en rojo.
+ */
+const statusTimers = { fade: 0, clear: 0 };
+function setStatus(text, kind = 'guide') {
+  if (kind === true) kind = 'error';
   const el = document.getElementById('status');
+  clearTimeout(statusTimers.fade); clearTimeout(statusTimers.clear);
   el.textContent = text;
-  el.classList.toggle('error', isError);
+  el.classList.remove('fading');
+  el.classList.toggle('error', kind === 'error');
+  if (kind === 'info' && text) {
+    statusTimers.fade = setTimeout(() => el.classList.add('fading'), 6000);
+    statusTimers.clear = setTimeout(() => { if (el.textContent === text) { el.textContent = ''; el.classList.remove('fading'); } }, 6400);
+  }
+}
+
+/** Distintivo discreto del modo (3D o AR) junto al título; el motivo va en su descripción. */
+function setModeBadge(text, reason, isAR = false) {
+  const b = document.getElementById('modeBadge');
+  b.hidden = !text;
+  b.textContent = text;
+  b.title = reason;
+  b.setAttribute('aria-label', `${text}: ${reason}`);
+  b.classList.toggle('ar', isAR);
 }
 
 const ui = {
@@ -2997,20 +3503,38 @@ const ui = {
     document.getElementById('btnZero').addEventListener('click', () => { this.stopGait(); applyAngles(zeroPose()); });
     this.btnAR.addEventListener('click', async () => {
       if (ar.session) { ar.session.end(); return; }
-      try { await ar.start(); } catch (e) { setStatus(`No se pudo iniciar la AR: ${e.message}`, true); }
+      try { await ar.start(); } catch (e) { setStatus(`No se pudo iniciar la AR: ${e.message}`, 'error'); }
     });
     // Los toques en el panel no deben colocar el robot
     const panel = document.getElementById('panel'), btnPanel = document.getElementById('btnPanel');
     panel.addEventListener('beforexrselect', (e) => e.preventDefault());
-    // Ocultar o mostrar el panel para dejar la pantalla libre
+    // Recoger o mostrar el panel para dejar la pantalla libre
     btnPanel.addEventListener('click', () => {
       const hidden = panel.classList.toggle('hidden');
-      const label = hidden ? 'Mostrar el panel' : 'Ocultar el panel';
-      btnPanel.textContent = hidden ? '☰ Panel' : '▾';
+      const label = hidden ? 'Mostrar las herramientas' : 'Recoger las herramientas';
+      btnPanel.replaceChildren(icons.el(hidden ? 'sliders' : 'down'));
       btnPanel.title = label;
       btnPanel.setAttribute('aria-label', label);
       btnPanel.setAttribute('aria-expanded', String(!hidden));
     });
+    // Herramientas de ingeniería: plegadas salvo que se hayan dejado abiertas
+    const advanced = document.getElementById('advanced');
+    try { advanced.open = localStorage.getItem('kamear.ingenieria') === '1'; } catch { /* sin almacenamiento */ }
+    advanced.addEventListener('toggle', () => {
+      try { localStorage.setItem('kamear.ingenieria', advanced.open ? '1' : '0'); } catch { /* sin almacenamiento */ }
+    });
+    // Barra superior de la AR en el móvil
+    const arbar = document.getElementById('arbar');
+    arbar.addEventListener('beforexrselect', (e) => e.preventDefault());
+    arbar.addEventListener('pointerdown', () => { dock.touchedAt = performance.now(); });
+    document.getElementById('btnArExit').addEventListener('click', () => ar.session?.end());
+    document.getElementById('btnArPlace').addEventListener('click', () => { if (ar.placed) ar.unplace(); });
+    document.getElementById('help').addEventListener('pointerdown', () => { dock.touchedAt = performance.now(); });
+  },
+
+  /** Texto e icono del botón de AR. */
+  setARLabel(inAR) {
+    this.btnAR.replaceChildren(icons.el(inAR ? 'exit' : 'ar'), Object.assign(document.createElement('span'), { textContent: inAR ? 'Salir de AR' : 'Entrar en AR' }));
   },
 
   /** Empieza un movimiento desde la postura actual. */
@@ -3258,22 +3782,49 @@ function runSelfTest() {
     blockPanel.poke(far); blockPanel.poke(near); blockPanel.poke(near);
     check('manos: el índice pulsa una ficha una sola vez', program.tokens.length === before + 1 && program.tokens.at(-1).type === 'walk');
     program.tokens = savedTokens; program.halt(); program.save(); blockPanel.dirty = true;
-    // Panel del móvil: lengüetas, añadir una ficha y recogerlo
+    // Panel del móvil: cajón ampliado y reducido, añadir, editar, borrar y deshacer
     {
-      const savedTab = dock.tab, savedHidden = blockPanel.hidden, n0 = program.tokens.length;
+      const savedHidden = blockPanel.hidden, n0 = program.tokens.length;
       const q = (sel) => dock.el.querySelector(sel);
-      blockPanel.hidden = false; dock.tab = 'palette'; dock.render();
-      const tabsOk = dock.el.querySelectorAll('.tabs [data-act="tab"]').length === 3 && !!q('.tabs .fold');
-      q('.page [data-act="add"][data-arg="hello"]').click();
+      blockPanel.hidden = false; dock.render();
+      const expandedOk = dock.el.classList.contains('expanded') && !!q('.runbar .go') && !!q('.more [data-act="add"]');
+      q('[data-act="add"][data-arg="hello"]').click(); dock.render();
       const added = program.tokens.length === n0 + 1 && program.tokens.at(-1).type === 'hello';
-      dock.render(); q('.tabs .fold').click(); dock.render();
-      const folded = blockPanel.hidden && dock.el.classList.contains('collapsed');
-      q('.tabs [data-arg="program"]').click(); dock.render();
-      const reopened = !blockPanel.hidden && dock.tab === 'program' && dock.el.querySelectorAll('.page .tile').length === n0 + 1;
-      check('móvil: el panel de fichas añade fichas, se recoge y cambia de lengüeta', tabsOk && added && folded && reopened);
-      program.tokens = savedTokens; program.halt(); program.save();
-      dock.tab = savedTab; blockPanel.hidden = savedHidden; blockPanel.dirty = true;
+      q('.grab').click(); dock.render();
+      const reduced = blockPanel.hidden && !dock.el.classList.contains('expanded') && !!q('.runbar [data-act="stop"]');
+      q(`.prog [data-act="sel"][data-arg="${n0}"]`).click(); dock.render();
+      const editing = !blockPanel.hidden && program.selected === n0 && !!q('.editbar [data-act="remove"]');
+      check('móvil: el cajón se amplía y se reduce, añade fichas y edita la seleccionada', expandedOk && added && reduced && editing);
+      q('[data-act="clear"]').click(); dock.render();
+      const cleared = !program.tokens.length && !!q('[data-act="undo"]');
+      q('[data-act="undo"]').click(); dock.render();
+      check('móvil: «Todo» se puede deshacer', cleared && program.tokens.length === n0 + 1 && !q('[data-act="undo"]'));
+      program.tokens = savedTokens; program.halt(); program.save(); program.selected = -1;
+      blockPanel.hidden = savedHidden; blockPanel.dirty = true;
       dock.el.hidden = !dock.shown;
+    }
+    // Corchetes de repetir y de si hay obstáculo, con anidamiento y sin cierre
+    {
+      const b = program.brackets(tk(['repeat', 2], 'walk', 'ifObstacle', 'hello', 'end', 'end', 'jump', 'repeat', 'walk'));
+      const s = b.map((x) => `${x.from}-${x.to}:${x.depth}${x.closed ? '' : '?'}`).join(',');
+      check('programa: los corchetes abarcan hasta su cierre (o el final)', s === '0-5:0,2-4:1,7-8:0?', s);
+    }
+    // Panel en lienzo: zonas con etiqueta para el árbol accesible y botón redondo del visor
+    {
+      blockPanel.draw();
+      const labelled = blockPanel.zones.every((z) => z.label && z.key);
+      blockPanel.a11yState = 'panel'; blockPanel.buildA11y();
+      const mirrored = blockPanel.a11y.querySelectorAll('button').length === blockPanel.zones.length;
+      blockPanel.a11yState = ''; blockPanel.a11y.replaceChildren();
+      check('accesibilidad: cada zona del panel en lienzo tiene su botón en el árbol oculto', labelled && mirrored, `${blockPanel.zones.length} zonas`);
+      const savedHidden = blockPanel.hidden;
+      blockPanel.hidden = false; blockPanel.toggle.visible = true; blockPanel.toggle.scale.setScalar(1);
+      blockPanel.toggle.position.set(1, 1, 1); blockPanel.toggleArmed = true;
+      blockPanel.pokeToggle(V(1, 1, 1.06)); blockPanel.pokeToggle(V(1, 1, 1.01)); blockPanel.pokeToggle(V(1, 1, 1.005));
+      const folded = blockPanel.hidden;
+      blockPanel.pokeToggle(V(1, 1, 1.08)); blockPanel.pokeToggle(V(1, 1, 1.01));
+      check('visor: el botón redondo recoge el panel y lo vuelve a abrir, una vez por pulsación', folded && !blockPanel.hidden);
+      blockPanel.toggle.visible = false; blockPanel.hidden = savedHidden; blockPanel.dirty = true;
     }
     hands.side.left.tracked = false;
     // Coger con el pellizco y levantar 12 cm
@@ -3363,7 +3914,7 @@ renderer.setAnimationLoop((time, frame) => {
     // Si se cae al vacío (por el borde de una mesa sin suelo detectado), vuelve a su sitio
     if (physics.body.translation().y < -4 * PHYS.scale) {
       physics.reset();
-      setStatus('El robot se ha caído fuera del entorno detectado; vuelve al punto de colocación.');
+      setStatus('El robot se ha caído fuera del entorno detectado; vuelve al punto de colocación.', 'info');
     }
   }
   if (frame && ar.session) ar.update(frame);
@@ -3396,22 +3947,23 @@ try {
     physicsNote = ' Sin físicas: no se pudo cargar el motor.';
   }
   await platform.detect();
+  // El modo queda en un distintivo junto al título; el motivo se avisa una vez y se desvanece
   if (platform.arSupported) {
     ui.btnAR.disabled = false;
-    setStatus('');
-  } else if (platform.isIOS) {
-    setStatus((platform.bridgeStatus === 'launch-required'
-      ? 'Modo 3D. Para la AR, acepta la tarjeta de Variant Launch que abre el visor.'
-      : platform.bridgeStatus === 'unsupported'
-        ? 'Modo 3D. Este dispositivo no admite la AR de Variant Launch.'
-        : 'Modo 3D. No se ha podido cargar el puente de AR para iPhone (Variant Launch).') + physicsNote);
+    setModeBadge('AR', 'Realidad aumentada disponible: pulsa «Entrar en AR».', true);
+    setStatus(physicsNote.trim(), physicsNote ? 'error' : 'guide');
   } else {
-    setStatus('Modo 3D. Este navegador no ofrece AR (WebXR immersive-ar).' + physicsNote);
+    const reason = !platform.isIOS ? 'Este navegador no ofrece AR (WebXR immersive-ar).'
+      : platform.bridgeStatus === 'launch-required' ? 'Para la AR, acepta la tarjeta de Variant Launch que abre el visor.'
+        : platform.bridgeStatus === 'unsupported' ? 'Este dispositivo no admite la AR de Variant Launch.'
+          : 'No se ha podido cargar el puente de AR para iPhone (Variant Launch).';
+    setModeBadge('Modo 3D', reason);
+    setStatus(`Modo 3D. ${reason}${physicsNote}`, physicsNote ? 'error' : 'info');
   }
   perf.init();
   const params = new URLSearchParams(location.search);
   if (!params.has('test')) help.first();
-  window.kame = { robot, physics, PHYS, applyAngles, kame32, MOTIONS, compileMotion, platform, environment, ar, hud, program, blockPanel, hands, perf, help }; // para depurar desde la consola
+  window.kame = { robot, physics, PHYS, applyAngles, kame32, MOTIONS, compileMotion, platform, environment, ar, hud, program, blockPanel, dock, hands, perf, help, icons }; // para depurar desde la consola
   if (new URLSearchParams(location.search).has('test')) runSelfTest();
   if (new URLSearchParams(location.search).has('env')) environment.demo();
 } catch (e) {

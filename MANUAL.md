@@ -6,9 +6,13 @@ Este manual explica cómo programar el robot con las fichas de [KameAR](https://
 
 Dónde está el panel depende del dispositivo:
 
-- **Escritorio (modo 3D):** flota sobre el robot.
-- **Móvil en realidad aumentada:** queda fijo en la pantalla, abajo y del lado de tu mano dominante (la que eliges en el panel de herramientas). Tiene tres páginas, una detrás de otra, con una lengüeta cada una: **Programa** (la fila de fichas y su edición), **Fichas** (la paleta) y **Ejecutar** (los botones). Toca una lengüeta para cambiar de página; la lengüeta de la página abierta, o **▾**, recoge el panel y deja solo las lengüetas para ver mejor.
-- **Meta Quest:** flota delante de ti, del lado de tu mano dominante, y te acompaña al moverte o girar la cabeza. Para cambiarlo de sitio, pellizca la barra que tiene debajo (o apúntala con el rayo y pellizca) y llévalo donde quieras: se queda ahí respecto a ti.
+- **Escritorio (modo 3D):** flota sobre el robot. Con el teclado, **Tab** recorre sus botones y fichas (se marcan con un borde azul) y **Intro** los pulsa.
+- **Móvil en realidad aumentada:** es un cajón fijo abajo, del lado de tu mano dominante (la que eliges en el panel de herramientas). Tiene dos alturas:
+  - **Reducido:** estrecho, con **Ejecutar**, **Paso** y **Parar** y la tira de tu programa. Así queda al ejecutar, para no tapar el robot.
+  - **Ampliado:** ocupa el ancho de la pantalla y añade **Quitar**, **Todo** y la paleta. Al seleccionar una ficha, sus botones de edición quedan fijos al pie.
+
+  Toca la cabecera del cajón (o desliza hacia arriba o abajo) para cambiar de altura. Tocar una ficha de la tira también lo amplía. Arriba a la derecha hay tres botones: el alfiler recoloca el robot, **?** abre la ayuda y **✕** sale de la realidad aumentada.
+- **Meta Quest:** flota delante de ti, del lado de tu mano dominante, y te acompaña al moverte o girar la cabeza. Para cambiarlo de sitio, pellizca la barra que tiene debajo (o apúntala con el rayo y pellizca) y llévalo donde quieras: se queda ahí respecto a ti. Al cogerla y soltarla notarás un clic (y una vibración, con mandos). El botón redondo junto a la barra recoge el panel y deja en su sitio solo ese botón; púlsalo, o vuelve la palma de tu otra mano hacia la cara, para recuperarlo.
 
 En el escritorio y en las Quest tiene cuatro zonas, de arriba abajo:
 
@@ -27,7 +31,7 @@ Cómo se pulsa en cada dispositivo:
 | Meta Quest | Pulsa con el índice de la mano dominante, o apunta con su rayo y pellizca |
 | Escritorio | Haz clic con el ratón |
 
-El panel se esconde al pulsar **Ejecutar** (en el móvil, se recoge), para dejar ver al robot. Toca el cuerpo del robot para que vuelva a aparecer; si lo tocas otra vez, se esconde.
+El panel se aparta al pulsar **Ejecutar** para dejar ver al robot: en el escritorio se esconde, en el móvil se reduce y en las Quest queda solo su botón redondo. Toca el cuerpo del robot para que vuelva a aparecer; si lo tocas otra vez, se aparta.
 
 ## Crear y cambiar un programa
 
@@ -35,7 +39,7 @@ El panel se esconde al pulsar **Ejecutar** (en el móvil, se recoge), para dejar
 2. **Seleccionar:** toca una ficha del programa. Queda rodeada de azul y aparecen sus botones en la zona de edición. Tócala de nuevo para soltarla.
 3. **Cambiar el número:** con la ficha seleccionada, usa **−** y **+**. Las fichas «repetir» y «esperar» tienen además **−10** y **+10**.
 4. **Cambiar el orden:** con la ficha seleccionada, **◀** y **▶** la mueven un puesto.
-5. **Quitar:** **✕ Quitar** borra la ficha seleccionada.
+5. **Quitar:** **✕** borra la ficha seleccionada.
 
 El programa se guarda solo en el navegador: al volver a abrir la página sigue ahí. Si cambias algo mientras el robot está ejecutando, el programa se detiene.
 
@@ -47,11 +51,13 @@ El programa se guarda solo en el navegador: al volver a abrir la página sigue a
 | ⏭ Paso | Ejecuta una sola ficha y se detiene. Sirve para ver qué hace cada ficha y para buscar errores |
 | ■ Parar | Detiene el programa y deja al robot en reposo |
 | ⌫ Quitar | Borra la ficha seleccionada o, si no hay ninguna, la última |
-| 🗑 Todo | Borra el programa entero |
-| 📍 Mover | Solo en realidad aumentada: recoge el robot para colocarlo en otro sitio |
-| ⟲ Inicio | Solo en modo 3D: detiene el programa y devuelve el robot al punto de partida |
+| 🗑 Todo | Borra el programa entero. Durante 8 segundos se convierte en **↶ Deshacer**, que lo recupera |
+| 📍 Mover | Solo en realidad aumentada: recoge el robot para colocarlo en otro sitio (en el móvil, es el alfiler de arriba) |
+| ⌂ Inicio | Solo en modo 3D: detiene el programa y devuelve el robot al punto de partida |
 
 Mientras el robot ejecuta, la ficha en curso aparece rodeada de blanco.
+
+En el panel, las fichas llevan iconos dibujados que se ven igual en cualquier dispositivo; los símbolos de las tablas de este manual se les parecen.
 
 ## Fichas de movimiento (azules)
 
@@ -95,7 +101,7 @@ No mueven al robot: deciden cómo se ejecutan las demás.
 
 ### Repetir y cerrar
 
-«Repetir» abre un paréntesis y «cerrar» lo termina. Todo lo que queda entre las dos fichas se repite las veces que diga el número.
+«Repetir» abre un paréntesis y «cerrar» lo termina. Todo lo que queda entre las dos fichas se repite las veces que diga el número. En el panel, un corchete amarillo por debajo une las dos fichas y abraza las de dentro; si falta el cierre, el corchete acaba en línea discontinua. En los ejemplos de este manual el paréntesis se escribe `🔁(` … `)`.
 
 ```
 🔁(3   ↑   👋   )   ↻
@@ -123,7 +129,7 @@ Si hay algo delante, gira a la derecha y luego avanza. Si no hay nada, solo avan
 
 ### Velocidad
 
-Al añadirla marca la tortuga (lenta). Selecciónala y usa **+** para pasar a normal (▶) o a rápida (🐇).
+Su icono es un velocímetro. Al añadirla marca lenta (aguja a la izquierda, 🐢 en este manual). Selecciónala y usa **+** para pasar a normal (aguja arriba, ▶) o a rápida (aguja a la derecha, 🐇).
 
 - Afecta a las fichas que vienen **después** de ella, hasta otra ficha de velocidad.
 - Cambia el ritmo de avanzar, retroceder, girar, bailar y las flexiones. Saludar, saltar y esperar duran siempre lo mismo.
@@ -179,5 +185,5 @@ Avanza despacio, luego deprisa, y termina dando una vuelta entera a velocidad no
 | Se repite más de lo que quería | Falta la ficha «cerrar» | Ponla donde debe terminar la repetición |
 | «Si hay obstáculo» no hace nada | No hay nada a menos de 25 cm, o estás en modo 3D | Pruébalo en realidad aumentada, frente a una pared |
 | El robot no llega donde yo quería | Los tramos dependen del suelo y de los choques | Ajusta el número de la ficha y prueba con **⏭ Paso** |
-| No veo el panel | Se esconde al ejecutar | Toca el cuerpo del robot |
+| No veo el panel | Se aparta al ejecutar | Toca el cuerpo del robot; en las Quest, también su botón redondo o la palma de la otra mano hacia ti |
 | El robot se ha caído o se ha quedado atascado | Las físicas son reales | Pulsa **📍 Mover** (o **⟲ Inicio** en modo 3D) y colócalo de nuevo |
