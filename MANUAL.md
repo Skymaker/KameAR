@@ -8,10 +8,10 @@ Dónde está el panel depende del dispositivo:
 
 - **Escritorio (modo 3D):** flota sobre el robot. Con el teclado, **Tab** recorre sus botones y fichas (se marcan con un borde azul) y **Intro** los pulsa.
 - **Móvil en realidad aumentada:** es un cajón fijo abajo, del lado de tu mano dominante (la que eliges en el panel de herramientas). Tiene dos alturas:
-  - **Reducido:** estrecho, con **Ejecutar**, **Paso** y **Parar** y tu programa. Así queda al ejecutar, para no tapar el robot.
-  - **Ampliado:** ocupa el ancho de la pantalla y añade **Quitar**, **Todo** y la paleta. Al seleccionar una ficha, sus botones de edición quedan fijos al pie.
+  - **Reducido:** estrecho, con **Ejecutar**, **Paso** y **Parar** y una línea de tres fichas de tu programa (desliza de lado para ver las demás; al ejecutar sigue a la ficha en curso). Así queda al ejecutar, para no tapar el robot.
+  - **Ampliado:** ocupa el ancho de la pantalla, muestra el programa completo (dos filas de 10) y añade **Quitar**, **Todo** y la paleta. Al seleccionar una ficha, sus botones de edición quedan fijos al pie.
 
-  En las dos alturas el programa está siempre a la vista, con tres filas de fichas; si tiene más, desliza el dedo sobre él. Toca la cabecera del cajón (o desliza hacia arriba o abajo) para cambiar de altura. Tocar una ficha del programa también lo amplía. Arriba a la derecha hay tres botones: el alfiler recoloca el robot, **?** abre la ayuda y **✕** sale de la realidad aumentada.
+  Toca la cabecera del cajón (o desliza hacia arriba o abajo) para cambiar de altura. Tocar una ficha del programa también lo amplía. Arriba a la derecha hay tres botones: el alfiler recoloca el robot, **?** abre la ayuda y **✕** sale de la realidad aumentada.
 - **Meta Quest:** flota delante de ti, del lado de tu mano dominante, y te acompaña al moverte o girar la cabeza. Para cambiarlo de sitio, pellizca la barra que tiene debajo (o apúntala con el rayo y pellizca) y llévalo donde quieras: se queda ahí respecto a ti. Al cogerla y soltarla notarás un clic (y una vibración, con mandos). El botón redondo junto a la barra recoge el panel y deja en su sitio solo ese botón; púlsalo, o vuelve la palma de tu otra mano hacia la cara, para recuperarlo.
 
 En el escritorio y en las Quest tiene cuatro zonas, de arriba abajo:
@@ -19,7 +19,7 @@ En el escritorio y en las Quest tiene cuatro zonas, de arriba abajo:
 | Zona | Para qué sirve |
 |---|---|
 | Botones | Ejecutar, parar y borrar el programa |
-| Programa | La fila de fichas que has puesto (hasta 18, en dos filas de 9) |
+| Programa | La fila de fichas que has puesto (hasta 20, en dos filas de 10) |
 | Edición | Cambia la ficha del programa que hayas seleccionado |
 | Paleta | Las fichas disponibles, en tres grupos: Mover, Acciones y Control |
 
@@ -184,7 +184,7 @@ Avanza despacio, luego deprisa, y termina dando una vuelta entera a velocidad no
 
 | Qué pasa | Por qué | Qué hacer |
 |---|---|---|
-| No puedo añadir más fichas | El programa admite 18 fichas | Usa «repetir» para acortarlo |
+| No puedo añadir más fichas | El programa admite 20 fichas | Usa «repetir» para acortarlo |
 | Se repite más de lo que quería | Falta la ficha «cerrar» | Ponla donde debe terminar la repetición |
 | «Si hay obstáculo» no hace nada | No hay nada a menos de 25 cm, o estás en modo 3D | Pruébalo en realidad aumentada, frente a una pared |
 | El robot no llega donde yo quería | Los tramos dependen del suelo y de los choques | Ajusta el número de la ficha y prueba con **⏭ Paso** |

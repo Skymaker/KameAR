@@ -150,11 +150,11 @@
   #tests .fail::before { content: "✗ "; }
 
   /* Panel de fichas del móvil en AR: un cajón con dos alturas. Recogido, es estrecho
-     (40 % del ancho) y está del lado de la mano dominante: botones de ejecución y el
-     programa. Ampliado, ocupa el ancho y añade edición, borrado y paleta. El programa
-     siempre muestra tres filas de fichas, aunque el cajón pase del tercio inferior. */
+     (justo tres fichas de ancho) y está del lado de la mano dominante: botones de
+     ejecución y una línea del programa. Ampliado, ocupa el ancho y añade el programa completo, edición,
+     borrado y paleta. */
   #blocks { position: absolute; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom));
-    width: clamp(9.5rem, 40vw, 23.75rem); max-height: 70vh; display: flex; flex-direction: column;
+    width: calc(3 * var(--touch) + 18px); max-height: 70vh; display: flex; flex-direction: column;
     background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-container); backdrop-filter: blur(8px); overflow: hidden; }
   #blocks[hidden] { display: none; }
   #blocks.left { right: auto; left: 12px; }
@@ -173,12 +173,17 @@
   #blocks:not(.expanded) .prog { column-gap: 4px; padding-left: 4px; padding-right: 4px; }
   #blocks .body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 0 0.5rem 0.5rem; overscroll-behavior: contain; }
   #blocks .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--touch), 1fr)); gap: 0.375rem; }
-  /* Programa: fichas de tamaño fijo, tres filas siempre a la vista (desplazable si hay más) */
-  #blocks .prog { position: relative; flex: none; grid-template-columns: repeat(auto-fill, var(--touch)); grid-auto-rows: var(--touch);
-    justify-content: start; padding: 6px 0.5rem; overflow-x: hidden; overflow-y: auto; scrollbar-width: thin;
-    overscroll-behavior: contain; --rg: calc(8px + var(--depth, 0) * 5px);
-    height: calc(3 * var(--touch) + 2 * var(--rg) + 12px + var(--depth, 0) * 5px); }
-  #blocks .prog.empty { display: flex; height: auto; align-items: center; justify-content: center; }
+  /* Programa, siempre a la vista. Ampliado: completo, en dos filas de 10 que se reparten
+     el ancho. Reducido: una línea de tres fichas que se desliza de lado. */
+  #blocks .prog { position: relative; flex: none; grid-template-columns: repeat(10, minmax(0, 1fr));
+    padding: 6px 0.5rem; overflow: hidden; --rg: calc(8px + var(--depth, 0) * 5px); }
+  #blocks .prog .tile { min-width: 0; min-height: 0; }
+  #blocks.expanded .prog { column-gap: 4px; }
+  #blocks:not(.expanded) .prog { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: var(--touch);
+    grid-template-rows: var(--touch); overflow-x: auto; overflow-y: hidden; scrollbar-width: none; overscroll-behavior: contain;
+    scroll-snap-type: x mandatory; scroll-padding-left: 4px; }
+  #blocks:not(.expanded) .prog .tile { scroll-snap-align: start; }
+  #blocks .prog.empty { display: flex; align-items: center; justify-content: center; }
   #blocks .prog.empty .hint { margin: 0; text-align: center; }
   /* Paleta: tamaño ajustable en Visualización (hasta +33 %); el programa no cambia */
   #blocks .more .grid { grid-template-columns: repeat(auto-fill, calc(var(--touch) * var(--pal, 1))); }
@@ -2184,7 +2189,7 @@ const PALETTE = [['Mover', ['walk', 'backward', 'turnL', 'turnR']], ['Acciones',
   ['Control', ['repeat', 'end', 'wait', 'ifObstacle', 'speed']]];
 
 const program = {
-  MAX: 18,
+  MAX: 20,
   /** group: mover, acción o control. n: número inicial; max: su tope. open: abre paréntesis. */
   TYPES: {
     walk: { glyph: '↑', group: 'move', n: 1, max: 9, name: 'Avanzar' },
@@ -2882,7 +2887,7 @@ const blockPanel = {
     const { rows, depth } = program.bracketRows(), D = Math.min(depth, 3);
     if (!program.tokens.length) label('Toca las fichas de la paleta para crear el programa', W / 2, 250, 30, C.muted);
     program.tokens.forEach((tok, i) => {
-      const x = 32 + (i % 9) * 108, y = 136 + Math.floor(i / 9) * 116, s = 92;
+      const x = 34 + (i % 10) * 96, y = 140 + Math.floor(i / 10) * 116, s = 84;
       for (const b of rows[i]) {
         const yb = y + s + 6 + (D - 1 - Math.min(b.depth, D - 1)) * 6;
         const x0 = b.start ? x + 14 : x - 8, x1 = b.end ? x + s - 14 : x + s + 8;
@@ -3096,7 +3101,7 @@ const dock = {
       button('step', 'Paso', 'step'),
       button('stop', 'Parar', 'stop', undefined, { className: 'halt' }));
 
-    // Programa (con sus corchetes): fuera del cuerpo desplazable, siempre a la vista con tres filas
+    // Programa (con sus corchetes): fuera del cuerpo desplazable; ampliado, completo; reducido, una línea de tres
     const { rows, depth } = program.bracketRows();
     this.depth = Math.min(depth, 4);
     let prog;
@@ -3145,18 +3150,20 @@ const dock = {
 
     // Al redibujar, el cuerpo y el programa conservan su desplazamiento (p. ej. al añadir fichas seguidas)
     const old = this.el.querySelector('.body'), keep = old && this.el.dataset.mode === String(expanded);
-    const scroll = keep ? old.scrollTop : 0, strip = this.el.querySelector('.prog')?.scrollTop ?? 0;
+    const scroll = keep ? old.scrollTop : 0, strip = keep ? this.el.querySelector('.prog')?.scrollLeft ?? 0 : 0;
     const grew = program.tokens.length > (this.count ?? 0);
     this.count = program.tokens.length;
     this.el.dataset.mode = String(expanded);
     this.el.replaceChildren(...kids);
     body.scrollTop = scroll;
-    // El programa muestra la ficha en curso; si no, la seleccionada o la recién añadida
-    const focus = program.active >= 0 ? program.active : program.selected >= 0 ? program.selected : grew ? program.tokens.length - 1 : -1;
-    prog.scrollTop = strip;
-    const t = prog.children[focus];
-    if (t?.classList.contains('tile') && (t.offsetTop < prog.scrollTop || t.offsetTop + t.offsetHeight > prog.scrollTop + prog.clientHeight)) {
-      prog.scrollTop = t.offsetTop - 6;
+    // Reducido: la línea muestra la ficha en curso; si no, la seleccionada o la recién añadida
+    if (!expanded) {
+      const focus = program.active >= 0 ? program.active : program.selected >= 0 ? program.selected : grew ? program.tokens.length - 1 : -1;
+      prog.scrollLeft = strip;
+      const t = prog.children[focus];
+      if (t?.classList.contains('tile') && (t.offsetLeft < prog.scrollLeft || t.offsetLeft + t.offsetWidth > prog.scrollLeft + prog.clientWidth)) {
+        prog.scrollLeft = Math.max(0, t.offsetLeft - 2 * (t.offsetWidth + 4) - 4); // la ficha queda la tercera
+      }
     }
   },
 };
@@ -3428,8 +3435,8 @@ const help = {
     if (platform.arSupported) return ['En realidad aumentada', [
       'Pulsa «Entrar en AR» y da permiso a la cámara.',
       'Mueve el móvil apuntando al suelo o a una mesa hasta ver el anillo amarillo, y toca para colocar el robot.',
-      `El panel de fichas queda abajo a la ${dom}, reducido: Ejecutar, Paso, Parar y tu programa, con tres filas de fichas siempre a la vista.`,
-      'Toca su cabecera, o desliza hacia arriba, para ampliarlo y ver la paleta; desliza hacia abajo para reducirlo.',
+      `El panel de fichas queda abajo a la ${dom}, reducido: Ejecutar, Paso, Parar y una línea de tres fichas de tu programa.`,
+      'Toca su cabecera, o desliza hacia arriba, para ampliarlo: verás el programa completo y la paleta. Desliza hacia abajo para reducirlo.',
       'Arriba a la derecha: el alfiler recoloca el robot, ? abre esta ayuda y ✕ sale de la realidad aumentada.',
     ]];
     if (platform.isIOS) return ['En iPhone', [
