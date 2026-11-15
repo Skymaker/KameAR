@@ -24,6 +24,9 @@
   html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text);
     font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
   canvas { display: block; touch-action: none; }
+  /* En AR, la página no tapa la imagen de la cámara: en el visor de iPhone
+     (Variant Launch) la cámara se pinta detrás de la página, no dentro del lienzo. */
+  html.ar, html.ar body { background: transparent; }
   #overlay { position: fixed; inset: 0; pointer-events: none; }
   #overlay > * { pointer-events: auto; }
   #panel { position: absolute; left: 12px; bottom: 12px; width: min(330px, calc(100vw - 24px));
@@ -81,6 +84,46 @@
   /* Panel oculto: solo queda el botón para volver a mostrarlo */
   #panel.hidden { width: auto; padding: 6px; }
   #panel.hidden > :not(.head), #panel.hidden .title { display: none; }
+  /* Con el panel de fichas abajo a la izquierda, el de herramientas pasa a la derecha */
+  html.dock-left #panel { left: auto; right: 12px; }
+
+  /* Panel de fichas del móvil en AR: fijo en el tercio inferior, del lado de la mano
+     dominante. Páginas apiladas con lengüetas; ▾ lo recoge a solo las lengüetas. */
+  #blocks { position: absolute; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom));
+    width: clamp(228px, 33.333vw, 380px); max-height: 33.333vh; display: flex; flex-direction: column; }
+  #blocks[hidden] { display: none; }
+  #blocks.left { right: auto; left: 12px; }
+  #blocks .tabs { display: flex; gap: 3px; align-items: flex-end; padding: 0 6px; }
+  #blocks .tabs button { flex: 1; min-width: 0; padding: 7px 2px 6px; border-radius: 10px 10px 0 0; border-bottom: none;
+    font-size: 12px; background: rgba(22, 27, 34, 0.7); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #blocks .tabs button[aria-selected="true"] { background: var(--panel); color: var(--text); font-weight: 600; }
+  #blocks .tabs .fold { flex: 0 0 30px; }
+  #blocks .page { overflow: auto; padding: 8px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line);
+    backdrop-filter: blur(8px); }
+  #blocks.collapsed .page { display: none; }
+  #blocks.collapsed .tabs button { border-radius: 10px; border-bottom: 1px solid var(--line); }
+  #blocks .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(44px, 1fr)); gap: 5px; }
+  #blocks .tile { position: relative; aspect-ratio: 1; padding: 0; border: none; border-radius: 9px; font-size: 21px;
+    font-weight: 700; color: #fff; line-height: 1; }
+  #blocks .tile.move { background: #2f7fe6; } #blocks .tile.act { background: #f08a24; }
+  #blocks .tile.ctl { background: #e9cc1c; color: #1b1b1d; }
+  #blocks .tile .n { position: absolute; right: 2px; bottom: 2px; min-width: 17px; padding: 1px 3px; border-radius: 5px;
+    background: rgba(0, 0, 0, 0.55); color: #fff; font-size: 11px; }
+  #blocks .tile.sel { outline: 3px solid #35e0ff; outline-offset: 1px; }
+  #blocks .tile.active { outline: 3px solid #fff; outline-offset: 1px; }
+  #blocks .tile:disabled { opacity: 0.35; }
+  #blocks h4 { margin: 8px 0 4px; font-size: 11px; font-weight: 600; color: var(--muted); }
+  #blocks h4:first-child { margin-top: 0; }
+  #blocks .hint { margin: 2px 0; font-size: 12px; color: var(--muted); }
+  #blocks .edit { margin-top: 8px; }
+  #blocks .edit b { display: block; margin-bottom: 4px; font-size: 12px; }
+  #blocks .buttons { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+  #blocks .buttons button { flex: 1 0 auto; min-height: 40px; padding: 6px 8px; }
+  #blocks .buttons output { align-self: center; min-width: 24px; text-align: center; font-weight: 700; }
+  #blocks .run { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  #blocks .run button { min-height: 48px; font-weight: 600; }
+  #blocks .run .go { grid-column: 1 / -1; background: #2e9e5b; border-color: transparent; color: #fff; }
+  #blocks .run .halt { background: #c0463c; border-color: transparent; color: #fff; }
 </style>
 <script type="importmap">
 {
@@ -141,16 +184,17 @@
   </div>
   <div id="help" role="dialog" aria-labelledby="helpTitle" hidden>
     <h2 id="helpTitle">KameAR</h2>
-    <p>Un robot cuadrúpedo que programas con fichas. Sobre él flota su panel.</p>
+    <p>Un robot cuadrúpedo que programas con fichas desde su panel.</p>
     <h3>Programar</h3>
     <ol>
       <li>Toca las fichas de abajo del panel para añadirlas al programa.</li>
       <li>Toca una ficha del programa para cambiar su número, moverla o quitarla.</li>
-      <li>Pulsa <b>▶ Ejecutar</b>. El panel se esconde; toca el robot para que vuelva.</li>
+      <li>Pulsa <b>▶ Ejecutar</b>. El panel se esconde (en el móvil, se recoge); toca el robot para que vuelva.</li>
     </ol>
     <div id="helpDevice"></div>
     <div class="row"><button id="btnHelpClose" class="primary">Empezar</button></div>
   </div>
+  <div id="blocks" hidden></div>
 </div>
 
 <noscript><p style="position:fixed;inset:0;display:grid;place-items:center;color:#fff;padding:24px;text-align:center">KameAR necesita JavaScript para funcionar.</p></noscript>
@@ -537,7 +581,7 @@ function printedPlastic(color, axis, roughness = 0.48) {
 }
 
 const _m1 = new THREE.Matrix4(), _m2 = new THREE.Matrix4(), _line = new THREE.Line3();
-const _p = new THREE.Vector3(), _q = new THREE.Vector3();
+const _p = new THREE.Vector3(), _q = new THREE.Vector3(), _Y = new THREE.Vector3(0, 1, 0);
 const _qa = new THREE.Quaternion(), _qb = new THREE.Quaternion();
 
 class KameRobot {
@@ -1353,6 +1397,8 @@ const physics = {
 const platform = {
   isIOS: /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1),
   isQuest: /OculusBrowser|Quest/.test(navigator.userAgent),
+  /** AR con el móvil en la mano (se toca la pantalla), no con un visor. */
+  get handheld() { return !this.isQuest && (this.caps.domOverlay || this.isIOS || /Android|Mobi/i.test(navigator.userAgent)); },
   arSupported: false,
   /** Lo que ha concedido la sesión AR en curso. */
   caps: { domOverlay: false, planes: false, meshes: false, depth: false, hands: false, anchors: false },
@@ -1745,8 +1791,10 @@ const ar = {
     this.startedAt = performance.now();
     this.roomCaptureAsked = false;
     platform.readCaps(session);
+    blockPanel.dirty = true;
     environment.clear();
     scene.background = null;
+    document.documentElement.classList.add('ar');
     floor.visible = false;
     placement.visible = false;
     arShadow.visible = true;
@@ -1755,7 +1803,13 @@ const ar = {
     const viewerSpace = await session.requestReferenceSpace('viewer');
     this.hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
     // Mano o mando izquierdo: salir de la AR. El resto (derecho, toque en el móvil): colocar el robot.
+    // Asa del panel flotante (visor): se coge apuntándola con el rayo, y se suelta al dejar de pellizcar
+    session.addEventListener('selectstart', (e) => blockPanel.grabFromXR(e));
+    session.addEventListener('selectend', (e) => { if (blockPanel.drag?.source === e.inputSource) blockPanel.endDrag(); });
     session.addEventListener('select', (e) => {
+      // El pellizco que mueve el panel, o un toque en el panel del móvil, no hace nada más
+      const now = performance.now();
+      if (blockPanel.drag || now - blockPanel.dragEndedAt < 400 || now - dock.touchedAt < 400) return;
       // Pellizco de la mano no dominante: salir de la AR (salvo con el panel en la palma, donde sería un accidente)
       if (e.inputSource?.handedness === hands.other) { if (!hands.palmShown) session.end(); return; }
       // El pellizco que coge o suelta el robot no pulsa nada
@@ -1764,16 +1818,16 @@ const ar = {
       if (this.placed) blockPanel.clickFromXR(e); else this.place();
     });
     session.addEventListener('end', () => this.end());
-    setStatus(platform.caps.domOverlay ? 'Apunta al suelo o a una mesa y toca para colocar el robot.'
+    setStatus(platform.handheld ? 'Apunta al suelo o a una mesa y toca para colocar el robot.'
       : `Pellizco ${hands.dominant === 'right' ? 'derecho' : 'izquierdo'}: colocar el robot. Pellizco ${hands.dominant === 'right' ? 'izquierdo' : 'derecho'}: salir.`);
-    if (!platform.caps.domOverlay) {
+    if (!platform.handheld) {
       const [dom, other] = hands.dominant === 'right' ? ['derecha', 'izquierda'] : ['izquierda', 'derecha'];
       hud.flash(`Apunta a una superficie con la mano ${dom} y pellizca para colocar el robot.\nPellizco con la mano ${other}: salir.`, 3600);
     }
     ui.btnAR.textContent = 'Salir de AR';
     // En el móvil, el panel de herramientas se recoge para dejar sitio al panel de fichas
     const tools = document.getElementById('panel');
-    if (platform.caps.domOverlay && !tools.classList.contains('hidden')) document.getElementById('btnPanel').click();
+    if (platform.handheld && !tools.classList.contains('hidden')) document.getElementById('btnPanel').click();
     environment.info();
   },
 
@@ -1800,9 +1854,9 @@ const ar = {
     placement.visible = true;
     if (physics.ready) physics.reset();
     this.placed = true;
-    if (!platform.caps.domOverlay) {
-      const [dom, other] = hands.dominant === 'right' ? ['derecha', 'izquierda'] : ['izquierda', 'derecha'];
-      hud.flash(`Vuelve la palma ${other} hacia ti para ver el panel y púlsalo con el índice.\nPellizca junto al robot con la ${dom} para cogerlo; empújalo con las manos.`, 14);
+    if (!platform.handheld) {
+      const dom = hands.dominant === 'right' ? 'derecha' : 'izquierda';
+      hud.flash(`El panel flota a tu ${dom}: púlsalo con el índice; su barra de abajo lo mueve.\nPellizca junto al robot con la ${dom} para cogerlo; empújalo con las manos.`, 14);
     }
     // El entorno se expresa respecto al punto de colocación: hay que recalcularlo
     environment.stale = true;
@@ -1812,7 +1866,8 @@ const ar = {
 
   update(frame) {
     if (!this.hitTestSource) return;
-    const hits = frame.getHitTestResults(this.hitTestSource);
+    // Con el robot colocado, el anillo desaparece hasta que se pide moverlo («Mover»)
+    const hits = this.placed ? [] : frame.getHitTestResults(this.hitTestSource);
     const pose = hits.length ? hits[0].getPose(renderer.xr.getReferenceSpace()) : null;
     this.reticle.visible = !!pose;
     if (pose) this.reticle.matrix.fromArray(pose.transform.matrix);
@@ -1823,7 +1878,7 @@ const ar = {
       this.roomCaptureAsked = true;
       this.session.initiateRoomCapture().catch((e) => console.warn('Configuración del espacio:', e));
     }
-    if (!platform.caps.domOverlay && (hud.active || perf.show)) hud.update(); else hud.mesh.visible = false;
+    if (!platform.handheld && (hud.active || perf.show)) hud.update(); else hud.mesh.visible = false;
     hands.update(frame);
     blockPanel.updatePointer(frame);
   },
@@ -1834,12 +1889,14 @@ const ar = {
     this.reticle.visible = false;
     hands.reset();
     blockPanel.pointer.visible = false;
+    blockPanel.drag = null; blockPanel.follow.ready = false; blockPanel.dirty = true;
     program.stop();
     this.onWall = false;
     arShadow.position.y = 0;
     hud.mesh.visible = false;
     environment.clear();
     scene.background = BG;
+    document.documentElement.classList.remove('ar');
     floor.visible = true;
     arShadow.visible = false;
     placement.visible = true;
@@ -2075,11 +2132,14 @@ const program = {
 };
 
 /* ==========================================================================
- * blockPanel — panel de fichas flotando sobre el robot
+ * blockPanel — panel de fichas
  *
  * Se dibuja en un lienzo y se muestra como un plano en la escena, siempre de
- * cara a la cámara. Se toca con el ratón o el dedo (modo 3D), con un toque en
- * la pantalla (AR en el móvil) o apuntando y pellizcando (visor).
+ * cara a la cámara:
+ * - Modo 3D: flota sobre el robot. Se toca con el ratón o el dedo.
+ * - Visor: flota a un lado (el de la mano dominante) y acompaña a la cabeza.
+ *   Se pulsa con el índice o apuntando y pellizcando; el asa de debajo lo mueve.
+ * En la AR del móvil, el panel es HTML fijo en la pantalla (ver `dock`).
  * ========================================================================== */
 
 const blockPanel = {
@@ -2096,6 +2156,22 @@ const blockPanel = {
   /** Rayo y punto con los que se apunta desde el visor. */
   pointer: new THREE.Group(),
   COLORS: { move: '#2f7fe6', act: '#f08a24', ctl: '#e9cc1c' },
+  HANDLE_COLOR: 0xc9d1db,
+  /** Panel flotante del visor: ancho (m) y posición por defecto respecto a la cabeza (x al lado dominante). */
+  FLOAT: { width: 0.3, side: 0.3, drop: -0.12, ahead: -0.5 },
+  handle: null,
+  /** Marco que sigue a la cabeza con retraso: posición y rumbo. */
+  follow: { pos: new THREE.Vector3(), yaw: 0, turning: false, ready: false, last: 0 },
+  /** Posición del panel en ese marco, si se ha movido con el asa. */
+  offset: null,
+  /** Arrastre del asa: { source, distance } con un rayo, o { hand } con un pellizco. */
+  drag: null,
+  dragEndedAt: 0,
+  /** Punto de agarre actual y separación entre él y el centro del panel. */
+  grip: new THREE.Vector3(),
+  gripOffset: new THREE.Vector3(),
+  _head: new THREE.Vector3(),
+  _v: new THREE.Vector3(),
 
   init() {
     this.canvas = Object.assign(document.createElement('canvas'), { width: this.W, height: this.H });
@@ -2113,6 +2189,13 @@ const blockPanel = {
     dot.renderOrder = 6;
     this.pointer.add(line, dot); this.pointer.visible = false;
     scene.add(this.pointer);
+
+    // Asa (visor): una barra bajo el panel, con una zona de agarre invisible algo mayor
+    const bar = new THREE.CapsuleGeometry(0.007, 0.09, 4, 12).rotateZ(Math.PI / 2);
+    this.handle = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.04, 0.03), new THREE.MeshBasicMaterial({ visible: false }));
+    this.handle.add(new THREE.Mesh(bar, new THREE.MeshBasicMaterial({ color: this.HANDLE_COLOR, toneMapped: false })));
+    this.handle.visible = false;
+    scene.add(this.handle);
 
     this.robotHit = new THREE.Mesh(new THREE.BoxGeometry(0.085, 0.06, 0.095), new THREE.MeshBasicMaterial({ visible: false }));
     this.robotHit.position.y = 0.015;
@@ -2139,6 +2222,10 @@ const blockPanel = {
       const hit = this.raycaster.intersectObject(this.mesh)[0];
       if (hit) return { panel: true, hit };
     }
+    if (this.handle.visible) {
+      const hit = this.raycaster.intersectObject(this.handle, false)[0];
+      if (hit) return { handle: true, hit };
+    }
     if (!robot.legs.length || !placement.visible) return null;
     const hit = this.raycaster.intersectObject(this.robotHit)[0];
     return hit ? { panel: false, hit } : null;
@@ -2151,6 +2238,7 @@ const blockPanel = {
   clickRay() {
     const t = this.target();
     if (!t) return false;
+    if (t.handle) return true;
     if (!t.panel) { this.hidden = !this.hidden; this.dirty = true; return true; }
     this.press(t.hit.uv.x * this.W, (1 - t.hit.uv.y) * this.H);
     return true;
@@ -2172,12 +2260,19 @@ const blockPanel = {
 
   /** En el visor, dibuja el rayo de la mano o el mando derecho y el punto donde toca el panel o el robot. */
   updatePointer(frame) {
-    let shown = false;
+    // Asa cogida con un rayo: el agarre sigue al rayo a la distancia a la que se cogió
+    const drag = this.drag;
+    if (drag?.source && this.xrRay(frame, drag.source)) {
+      const ray = this.raycaster.ray;
+      this.grip.copy(ray.origin).addScaledVector(ray.direction, drag.distance);
+    }
+    let shown = false, onHandle = false;
     if (ar.placed) {
       for (const source of frame.session.inputSources) {
         if (source.targetRayMode !== 'tracked-pointer' || source.handedness === hands.other || hands.grabbing) continue;
         if (!this.xrRay(frame, source)) continue;
-        const hit = this.target()?.hit;
+        const t = this.target(), hit = t?.hit;
+        onHandle = !!t?.handle;
         const ray = this.raycaster.ray, length = hit ? hit.distance : 1.2;
         const [line, dot] = this.pointer.children;
         line.position.copy(ray.origin);
@@ -2190,34 +2285,101 @@ const blockPanel = {
       }
     }
     this.pointer.visible = shown;
+    // El asa se ilumina al apuntarla y mientras se arrastra
+    this.handle.children[0].material.color.setHex(this.drag || onHandle ? 0xd8f000 : this.HANDLE_COLOR);
+  },
+
+  /** Coge el asa con el rayo de una fuente de entrada (al empezar el pellizco o el gatillo). */
+  grabFromXR(event) {
+    if (!this.handle.visible || this.drag || !this.xrRay(event.frame, event.inputSource)) return;
+    const hit = this.raycaster.intersectObject(this.handle, false)[0];
+    if (!hit) return;
+    this.drag = { source: event.inputSource, distance: hit.distance };
+    this.grip.copy(hit.point);
+    this.gripOffset.subVectors(this.mesh.position, hit.point);
+  },
+
+  /** Coge el asa con un pellizco hecho junto a ella (a menos de 6 cm). */
+  grabWith(hand, point) {
+    if (!this.handle.visible || this.drag) return false;
+    if (point.distanceTo(this.handle.position) > 0.06) return false;
+    this.drag = { hand };
+    this.grip.copy(point);
+    this.gripOffset.subVectors(this.mesh.position, point);
+    return true;
+  },
+
+  /** Suelta el asa: el panel se queda donde está, en el marco que sigue a la cabeza. */
+  endDrag(now = performance.now()) {
+    if (!this.drag) return;
+    this.drag = null;
+    this.dragEndedAt = now;
+    const f = this.follow;
+    const o = this._v.subVectors(this.mesh.position, f.pos).applyAxisAngle(_Y, -f.yaw);
+    // Ni pegado a la cara ni fuera del alcance de la vista
+    const flat = Math.hypot(o.x, o.z);
+    if (flat < 0.25 || flat > 1.5) { const k = THREE.MathUtils.clamp(flat, 0.25, 1.5) / (flat || 1); o.x *= k; o.z *= k; if (!flat) o.z = -0.25; }
+    o.y = THREE.MathUtils.clamp(o.y, -0.7, 0.5);
+    this.offset = o.clone();
   },
 
   /**
-   * Sitúa el panel: sobre la palma de la mano no dominante cuando esta mira a
-   * la cara; si no, sobre el robot, de cara a la cámara y con tamaño aparente constante.
+   * Sitúa el panel. En el visor flota al lado de la mano dominante y sigue a la
+   * cabeza con retraso; en el modo 3D, sobre el robot, de cara a la cámara y con
+   * tamaño aparente constante. En la AR del móvil, el panel es el de `dock`.
    */
   update() {
     const base = robot.legs.length > 0 && (!ar.session || ar.placed);
-    const palm = base && hands.palmShown ? hands.palm : null;
-    const visible = base && (!!palm || !this.hidden);
+    const docked = !!ar.session && platform.handheld;
+    const visible = base && !docked && !this.hidden;
     this.mesh.visible = visible;
-    if (!visible) return;
-    if (this.dirty) { this.draw(); this.dirty = false; }
-    if (palm) {
-      // 22 cm de ancho: fichas de 2 cm, cómodas para el índice
-      this.mesh.scale.setScalar(0.22);
-      this.mesh.position.copy(palm.center).addScaledVector(palm.normal, 0.03);
-      this.mesh.position.y += 0.14;
-      this.mesh.lookAt(hands.head);
-      return;
+    this.handle.visible = visible && !!ar.session;
+    dock.show(base && docked);
+    if (this.dirty && (visible || dock.shown)) {
+      if (dock.shown) dock.render(); else this.draw();
+      this.dirty = false;
     }
-    const cam = ar.session ? renderer.xr.getCamera() : camera;
-    cam.getWorldPosition(_p);
+    if (!visible) { if (this.drag) this.endDrag(); return; }
+    if (ar.session) { this.float(); return; }
+    camera.getWorldPosition(_p);
     robot.root.getWorldPosition(_q);
     const width = Math.min(0.9, Math.max(0.26, 0.36 * _p.distanceTo(_q)));
     this.mesh.scale.setScalar(width);
     this.mesh.position.copy(_q); this.mesh.position.y += 0.07 + width * this.H / this.W / 2;
     this.mesh.lookAt(_p);
+  },
+
+  /**
+   * Visor: el panel flota delante, del lado de la mano dominante, y acompaña a
+   * la cabeza sin seguir cada pequeño movimiento: la posición, con suavidad; el
+   * rumbo, solo cuando la cabeza se ha girado más de 25°. Con el asa cogida, va
+   * donde la lleve el agarre.
+   */
+  float() {
+    const now = performance.now(), f = this.follow;
+    const dt = f.ready ? Math.min(0.1, (now - f.last) / 1000) : 0;
+    f.last = now;
+    const cam = renderer.xr.getCamera(), head = this._head;
+    cam.getWorldPosition(head); cam.getWorldQuaternion(_qa);
+    const fwd = this._v.set(0, 0, -1).applyQuaternion(_qa);
+    const yaw = Math.atan2(-fwd.x, -fwd.z);
+    if (!f.ready) { f.pos.copy(head); f.yaw = yaw; f.ready = true; }
+    f.pos.lerp(head, 1 - Math.exp(-dt * 3));
+    const d = Math.atan2(Math.sin(yaw - f.yaw), Math.cos(yaw - f.yaw));
+    if (Math.abs(d) > 25 * DEG) f.turning = true;
+    if (f.turning) { f.yaw += d * (1 - Math.exp(-dt * 4)); if (Math.abs(d) < 2 * DEG) f.turning = false; }
+
+    const F = this.FLOAT, half = F.width * this.H / this.W / 2, gap = 0.03;
+    this.mesh.scale.setScalar(F.width);
+    if (this.drag) this.mesh.position.addVectors(this.grip, this.gripOffset);
+    else {
+      const o = this.offset ?? this._v.set((hands.dominant === 'right' ? 1 : -1) * F.side, F.drop, F.ahead);
+      this.mesh.position.copy(o).applyAxisAngle(_Y, f.yaw).add(f.pos);
+    }
+    this.mesh.lookAt(head);
+    // El asa, centrada bajo el panel y en su mismo plano
+    this.handle.quaternion.copy(this.mesh.quaternion);
+    this.handle.position.set(0, -(half + gap), 0).applyQuaternion(this.mesh.quaternion).add(this.mesh.position);
   },
 
   /** Pulsa la zona que haya en el punto (x, y) del lienzo. */
@@ -2338,6 +2500,138 @@ blockPanel.init();
 program.load();
 
 /* ==========================================================================
+ * dock — panel de fichas del móvil en AR
+ *
+ * HTML fijo en la pantalla (en la capa DOM de la sesión AR), en el tercio
+ * inferior y del lado de la mano dominante, para no tapar el robot ni moverse
+ * con él. Tres páginas apiladas, con una lengüeta cada una: Programa, Fichas y
+ * Ejecutar. ▾ lo recoge a solo las lengüetas (también al ejecutar, y al tocar
+ * el robot). Recogido = `blockPanel.hidden`.
+ * ========================================================================== */
+
+const dock = {
+  el: document.getElementById('blocks'),
+  TABS: [['program', 'Programa'], ['palette', 'Fichas'], ['run', 'Ejecutar']],
+  tab: 'palette',
+  shown: false,
+  /** Último toque en el panel: el toque no debe llegar a la escena (colocar o recoger). */
+  touchedAt: 0,
+
+  init() {
+    try { const t = localStorage.getItem('kamear.pestana'); if (this.TABS.some(([id]) => id === t)) this.tab = t; } catch { /* sin almacenamiento */ }
+    this.el.addEventListener('beforexrselect', (e) => e.preventDefault());
+    this.el.addEventListener('pointerdown', () => { this.touchedAt = performance.now(); });
+    this.el.addEventListener('click', (e) => {
+      this.touchedAt = performance.now();
+      const b = e.target.closest('[data-act]');
+      if (b && !b.disabled) this.act(b.dataset.act, b.dataset.arg);
+    });
+  },
+
+  show(on) {
+    if (on === this.shown) return;
+    this.shown = on;
+    this.el.hidden = !on;
+    if (!on) { document.documentElement.classList.remove('dock-left'); return; }
+    this.render();
+  },
+
+  act(name, arg) {
+    const i = program.selected;
+    switch (name) {
+      case 'tab':
+        // La lengüeta de la página abierta recoge el panel; cualquier otra lo abre en su página
+        if (arg === this.tab && !blockPanel.hidden) blockPanel.hidden = true;
+        else { this.tab = arg; blockPanel.hidden = false; }
+        try { localStorage.setItem('kamear.pestana', this.tab); } catch { /* sin almacenamiento */ }
+        break;
+      case 'fold': blockPanel.hidden = !blockPanel.hidden; break;
+      case 'add': program.add(arg); break;
+      case 'sel': program.selected = program.selected === +arg ? -1 : +arg; break;
+      case 'bump': program.bump(i, +arg); break;
+      case 'move': program.move(i, +arg); break;
+      case 'remove': program.remove(i); break;
+      case 'backspace': program.backspace(); break;
+      case 'clear': program.clear(); break;
+      case 'run': blockPanel.hidden = true; program.run(); break;
+      case 'step': program.step(); break;
+      case 'stop': program.stop(); break;
+      case 'place': ar.unplace(); break;
+    }
+    blockPanel.dirty = true;
+  },
+
+  render() {
+    const T = program.TYPES, side = hands.dominant === 'left' ? 'left' : 'right';
+    const el = (tag, { data, ...props } = {}, ...kids) => {
+      const n = Object.assign(document.createElement(tag), props);
+      for (const [k, v] of Object.entries(data ?? {})) n.dataset[k] = v;
+      n.append(...kids);
+      return n;
+    };
+    const button = (text, act, arg, props = {}) => el('button', { type: 'button', textContent: text, ...props, data: { act, ...(arg !== undefined && { arg }) } });
+    const tile = (tok, act, arg, cls = '') => {
+      const def = T[tok.type];
+      const glyph = tok.type === 'speed' ? ['🐢', '▶', '🐇'][tok.n - 1] : def.glyph + (def.open ? '(' : '');
+      const b = button(glyph, act, arg, { className: `tile ${def.group} ${cls}`, title: def.name, ariaLabel: def.name });
+      if (def.max && tok.type !== 'speed') b.append(el('span', { className: 'n', textContent: tok.n }));
+      return b;
+    };
+
+    this.el.classList.toggle('left', side === 'left');
+    this.el.classList.toggle('collapsed', blockPanel.hidden);
+    document.documentElement.classList.toggle('dock-left', side === 'left');
+    const tabs = el('div', { className: 'tabs', role: 'tablist' },
+      ...this.TABS.map(([id, name]) => button(name, 'tab', id,
+        { role: 'tab', ariaSelected: String(id === this.tab && !blockPanel.hidden) })),
+      button(blockPanel.hidden ? '▴' : '▾', 'fold', undefined,
+        { className: 'fold', ariaLabel: blockPanel.hidden ? 'Mostrar el panel' : 'Recoger el panel', ariaExpanded: String(!blockPanel.hidden) }));
+
+    const page = el('div', { className: 'page', role: 'tabpanel' });
+    if (this.tab === 'program') {
+      if (program.tokens.length) {
+        page.append(el('div', { className: 'grid' }, ...program.tokens.map((tok, i) =>
+          tile(tok, 'sel', i, i === program.active ? 'active' : i === program.selected ? 'sel' : ''))));
+      } else page.append(el('p', { className: 'hint', textContent: 'Programa vacío: añade fichas desde «Fichas».' }));
+      const sel = program.tokens[program.selected];
+      if (sel) {
+        const def = T[sel.type], buttons = el('div', { className: 'buttons' });
+        if (def.max) {
+          if (def.max > 9) buttons.append(button('−10', 'bump', -10));
+          buttons.append(button('−', 'bump', -1), el('output', { textContent: sel.n }), button('+', 'bump', 1));
+          if (def.max > 9) buttons.append(button('+10', 'bump', 10));
+        }
+        buttons.append(button('◀', 'move', -1, { ariaLabel: 'Mover a la izquierda' }), button('▶', 'move', 1, { ariaLabel: 'Mover a la derecha' }), button('✕ Quitar', 'remove'));
+        page.append(el('div', { className: 'edit' }, el('b', { textContent: def.name }), buttons));
+      } else if (program.tokens.length) page.append(el('p', { className: 'hint', textContent: 'Toca una ficha para cambiarla.' }));
+      page.append(el('div', { className: 'buttons' }, button('⌫ Quitar', 'backspace'), button('🗑 Todo', 'clear')));
+    } else if (this.tab === 'palette') {
+      const full = program.tokens.length >= program.MAX;
+      for (const [name, types] of [['Mover', ['walk', 'backward', 'turnL', 'turnR']], ['Acciones', ['hello', 'jump', 'dance', 'pushUp']],
+        ['Control', ['repeat', 'end', 'wait', 'ifObstacle', 'speed']]]) {
+        page.append(el('h4', { textContent: name }), el('div', { className: 'grid' }, ...types.map((type) => {
+          const b = tile({ type, n: T[type].n ?? 1 }, 'add', type);
+          b.disabled = full;
+          return b;
+        })));
+      }
+      if (full) page.append(el('p', { className: 'hint', textContent: `Programa lleno (${program.MAX} fichas).` }));
+    } else {
+      page.append(el('div', { className: 'run' },
+        button(program.running ? '▶ Activo' : program.paused ? '▶ Seguir' : '▶ Ejecutar', 'run', undefined, { className: 'go' }),
+        button('⏭ Paso', 'step'), button('■ Parar', 'stop', undefined, { className: 'halt' }),
+        button('📍 Mover el robot', 'place', undefined, { style: 'grid-column: 1 / -1' })));
+    }
+    // Al redibujar, la página conserva su desplazamiento (p. ej. al añadir fichas seguidas)
+    const old = this.el.querySelector('.page'), scroll = old && this.el.dataset.tab === this.tab ? old.scrollTop : 0;
+    this.el.dataset.tab = this.tab;
+    this.el.replaceChildren(tabs, page);
+    page.scrollTop = scroll;
+  },
+};
+dock.init();
+
+/* ==========================================================================
  * hands — manos en el visor
  *
  * - Mano no dominante: al volver la palma hacia la cara, el panel de fichas
@@ -2416,9 +2710,20 @@ const hands = {
       this.palmShown = this.palmShown ? facing > 0.3 : facing > 0.55;
     } else this.palmShown = false;
 
+    // Asa del panel flotante: un pellizco junto a ella (con cualquier mano) la coge
+    for (const name of [this.dominant, this.other]) {
+      const h = this.side[name];
+      if (h.pinching && !h.wasPinching) blockPanel.grabWith(name, h.pinch);
+    }
+    const drag = blockPanel.drag;
+    if (drag?.hand) {
+      const h = this.side[drag.hand];
+      if (h.pinching) blockPanel.grip.copy(h.pinch); else blockPanel.endDrag(now);
+    }
+
     // Coger: pellizco de la mano dominante a menos de 12 cm del robot
     const dom = this.side[this.dominant];
-    if (physics.ready && placed) {
+    if (physics.ready && placed && !blockPanel.drag) {
       robot.root.getWorldPosition(_p);
       if (!this.grabbing && dom.pinching && !dom.wasPinching && dom.pinch.distanceTo(_p) < 0.12) this.grabbing = true;
     }
@@ -2426,7 +2731,7 @@ const hands = {
     if (this.grabbing) this.carry(dom.pinch);
 
     // Pulsar el panel con el índice de la mano dominante
-    if (dom.tracked && !this.grabbing) blockPanel.poke(dom.joints['index-finger-tip']);
+    if (dom.tracked && !this.grabbing && !blockPanel.drag) blockPanel.poke(dom.joints['index-finger-tip']);
 
     this.aim(placed);
   },
@@ -2579,14 +2884,16 @@ const help = {
     if (platform.isQuest) return ['En el visor', [
       'Pulsa «Entrar en AR».',
       `Apunta al suelo o a una mesa con la mano ${dom} y pellizca para colocar el robot.`,
-      `Vuelve la palma ${other} hacia ti: el panel aparece sobre ella. Pulsa las fichas con el índice.`,
+      `El panel de fichas flota a tu ${dom} y te acompaña. Púlsalo con el índice, o apunta y pellizca.`,
+      'Para cambiarlo de sitio, pellizca la barra que tiene debajo y llévalo donde quieras.',
       `Pellizca junto al robot con la mano ${dom} para cogerlo. Las dos manos lo empujan.`,
       `Un pellizco con la mano ${other} sale de la realidad aumentada.`,
     ]];
     if (platform.arSupported) return ['En realidad aumentada', [
       'Pulsa «Entrar en AR» y da permiso a la cámara.',
       'Mueve el móvil apuntando al suelo o a una mesa hasta ver el anillo amarillo, y toca para colocar el robot.',
-      'El botón «Mover» del panel de fichas permite recolocarlo.',
+      `El panel de fichas queda abajo a la ${dom}. Sus lengüetas pasan de Programa a Fichas y a Ejecutar; ▾ lo recoge para ver mejor.`,
+      'El botón «Mover el robot» (en Ejecutar) permite recolocarlo.',
     ]];
     if (platform.isIOS) return ['En iPhone', [
       'Safari no trae realidad aumentada en la web: la página pide abrir el visor de Variant Launch. Acepta su tarjeta («Abrir») para entrar con AR.',
@@ -2684,6 +2991,7 @@ const ui = {
     hands.dominant = selHand.value;
     selHand.addEventListener('change', () => {
       hands.dominant = selHand.value;
+      blockPanel.dirty = true;
       try { localStorage.setItem('kamear.mano', selHand.value); } catch { /* sin almacenamiento */ }
     });
     document.getElementById('btnZero').addEventListener('click', () => { this.stopGait(); applyAngles(zeroPose()); });
@@ -2950,6 +3258,23 @@ function runSelfTest() {
     blockPanel.poke(far); blockPanel.poke(near); blockPanel.poke(near);
     check('manos: el índice pulsa una ficha una sola vez', program.tokens.length === before + 1 && program.tokens.at(-1).type === 'walk');
     program.tokens = savedTokens; program.halt(); program.save(); blockPanel.dirty = true;
+    // Panel del móvil: lengüetas, añadir una ficha y recogerlo
+    {
+      const savedTab = dock.tab, savedHidden = blockPanel.hidden, n0 = program.tokens.length;
+      const q = (sel) => dock.el.querySelector(sel);
+      blockPanel.hidden = false; dock.tab = 'palette'; dock.render();
+      const tabsOk = dock.el.querySelectorAll('.tabs [data-act="tab"]').length === 3 && !!q('.tabs .fold');
+      q('.page [data-act="add"][data-arg="hello"]').click();
+      const added = program.tokens.length === n0 + 1 && program.tokens.at(-1).type === 'hello';
+      dock.render(); q('.tabs .fold').click(); dock.render();
+      const folded = blockPanel.hidden && dock.el.classList.contains('collapsed');
+      q('.tabs [data-arg="program"]').click(); dock.render();
+      const reopened = !blockPanel.hidden && dock.tab === 'program' && dock.el.querySelectorAll('.page .tile').length === n0 + 1;
+      check('móvil: el panel de fichas añade fichas, se recoge y cambia de lengüeta', tabsOk && added && folded && reopened);
+      program.tokens = savedTokens; program.halt(); program.save();
+      dock.tab = savedTab; blockPanel.hidden = savedHidden; blockPanel.dirty = true;
+      dock.el.hidden = !dock.shown;
+    }
     hands.side.left.tracked = false;
     // Coger con el pellizco y levantar 12 cm
     const pinchAt = (y) => setHand('right', V(0, y + 0.02, 0.2), false, { 'thumb-tip': V(0.004, y, 0), 'index-finger-tip': V(-0.004, y, 0) });

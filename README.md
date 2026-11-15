@@ -11,8 +11,8 @@ KameAR pone un robot [Kame32](https://github.com/JavierIH/kame32) en tu habitaci
 
 | Dispositivo | Qué ofrece |
 |---|---|
-| Meta Quest 3 | Realidad aumentada con las manos: panel en la palma, coger y empujar el robot, oclusión con el entorno |
-| Android (Chrome con ARCore) | Realidad aumentada: el robot sobre el suelo o una mesa, con el panel de fichas flotando sobre él |
+| Meta Quest 3 | Realidad aumentada con las manos: panel flotante que te acompaña (con un asa para moverlo), coger y empujar el robot, oclusión con el entorno |
+| Android (Chrome con ARCore) | Realidad aumentada: el robot sobre el suelo o una mesa, con el panel de fichas fijo abajo, en pestañas que se recogen |
 | iPhone y iPad | Realidad aumentada a través de [Variant Launch](https://launch.variant3d.com/): Safari muestra una tarjeta que abre la página en un visor con AR. Sin oclusión con el entorno |
 | Escritorio | Modo 3D, sin realidad aumentada, con la programación y las físicas completas |
 
@@ -26,7 +26,7 @@ El panel se esconde al ejecutar; toca el robot para que vuelva. El botón **?** 
 
 En las Quest:
 
-- Vuelve hacia ti la palma de la mano no dominante para ver el panel sobre ella, y pulsa las fichas con el índice de la otra mano.
+- El panel flota a tu lado (el de la mano dominante) y te sigue; pulsa las fichas con el índice. Pellizca la barra de debajo para moverlo.
 - Pellizca junto al robot con la mano dominante para cogerlo. Las dos manos lo empujan.
 - Un pellizco con la mano no dominante sale de la realidad aumentada.
 

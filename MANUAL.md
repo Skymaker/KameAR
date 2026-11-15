@@ -4,7 +4,13 @@ Este manual explica cómo programar el robot con las fichas de [KameAR](https://
 
 ## El panel de fichas
 
-El panel flota sobre el robot. En las Meta Quest aparece también sobre la palma de la mano no dominante cuando la vuelves hacia ti. Tiene cuatro zonas, de arriba abajo:
+Dónde está el panel depende del dispositivo:
+
+- **Escritorio (modo 3D):** flota sobre el robot.
+- **Móvil en realidad aumentada:** queda fijo en la pantalla, abajo y del lado de tu mano dominante (la que eliges en el panel de herramientas). Tiene tres páginas, una detrás de otra, con una lengüeta cada una: **Programa** (la fila de fichas y su edición), **Fichas** (la paleta) y **Ejecutar** (los botones). Toca una lengüeta para cambiar de página; la lengüeta de la página abierta, o **▾**, recoge el panel y deja solo las lengüetas para ver mejor.
+- **Meta Quest:** flota delante de ti, del lado de tu mano dominante, y te acompaña al moverte o girar la cabeza. Para cambiarlo de sitio, pellizca la barra que tiene debajo (o apúntala con el rayo y pellizca) y llévalo donde quieras: se queda ahí respecto a ti.
+
+En el escritorio y en las Quest tiene cuatro zonas, de arriba abajo:
 
 | Zona | Para qué sirve |
 |---|---|
@@ -18,10 +24,10 @@ Cómo se pulsa en cada dispositivo:
 | Dispositivo | Cómo pulsar |
 |---|---|
 | Móvil | Toca la ficha en la pantalla |
-| Meta Quest | Apunta con el rayo de la mano dominante y pellizca, o pulsa con el índice el panel de la palma |
+| Meta Quest | Pulsa con el índice de la mano dominante, o apunta con su rayo y pellizca |
 | Escritorio | Haz clic con el ratón |
 
-El panel se esconde al pulsar **Ejecutar**, para dejar ver al robot. Toca el cuerpo del robot para que vuelva a aparecer; si lo tocas otra vez, se esconde.
+El panel se esconde al pulsar **Ejecutar** (en el móvil, se recoge), para dejar ver al robot. Toca el cuerpo del robot para que vuelva a aparecer; si lo tocas otra vez, se esconde.
 
 ## Crear y cambiar un programa
 
