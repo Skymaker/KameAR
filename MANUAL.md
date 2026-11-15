@@ -8,10 +8,10 @@ Dónde está el panel depende del dispositivo:
 
 - **Escritorio (modo 3D):** flota sobre el robot. Con el teclado, **Tab** recorre sus botones y fichas (se marcan con un borde azul) y **Intro** los pulsa.
 - **Móvil en realidad aumentada:** es un cajón fijo abajo, del lado de tu mano dominante (la que eliges en el panel de herramientas). Tiene dos alturas:
-  - **Reducido:** estrecho, con **Ejecutar**, **Paso** y **Parar** y la tira de tu programa. Así queda al ejecutar, para no tapar el robot.
+  - **Reducido:** estrecho, con **Ejecutar**, **Paso** y **Parar** y tu programa. Así queda al ejecutar, para no tapar el robot.
   - **Ampliado:** ocupa el ancho de la pantalla y añade **Quitar**, **Todo** y la paleta. Al seleccionar una ficha, sus botones de edición quedan fijos al pie.
 
-  Toca la cabecera del cajón (o desliza hacia arriba o abajo) para cambiar de altura. Tocar una ficha de la tira también lo amplía. Arriba a la derecha hay tres botones: el alfiler recoloca el robot, **?** abre la ayuda y **✕** sale de la realidad aumentada.
+  En las dos alturas el programa está siempre a la vista, con tres filas de fichas; si tiene más, desliza el dedo sobre él. Toca la cabecera del cajón (o desliza hacia arriba o abajo) para cambiar de altura. Tocar una ficha del programa también lo amplía. Arriba a la derecha hay tres botones: el alfiler recoloca el robot, **?** abre la ayuda y **✕** sale de la realidad aumentada.
 - **Meta Quest:** flota delante de ti, del lado de tu mano dominante, y te acompaña al moverte o girar la cabeza. Para cambiarlo de sitio, pellizca la barra que tiene debajo (o apúntala con el rayo y pellizca) y llévalo donde quieras: se queda ahí respecto a ti. Al cogerla y soltarla notarás un clic (y una vibración, con mandos). El botón redondo junto a la barra recoge el panel y deja en su sitio solo ese botón; púlsalo, o vuelve la palma de tu otra mano hacia la cara, para recuperarlo.
 
 En el escritorio y en las Quest tiene cuatro zonas, de arriba abajo:
@@ -31,6 +31,8 @@ Cómo se pulsa en cada dispositivo:
 | Meta Quest | Pulsa con el índice de la mano dominante, o apunta con su rayo y pellizca |
 | Escritorio | Haz clic con el ratón |
 
+Si las fichas de la paleta te parecen pequeñas, en el panel de herramientas abre **Herramientas de ingeniería** y, en **Visualización**, sube **Tamaño de la paleta** hasta el 133 %. Las fichas del programa no cambian de tamaño.
+
 El panel se aparta al pulsar **Ejecutar** para dejar ver al robot: en el escritorio se esconde, en el móvil se reduce y en las Quest queda solo su botón redondo. Toca el cuerpo del robot para que vuelva a aparecer; si lo tocas otra vez, se aparta.
 
 ## Crear y cambiar un programa
@@ -39,7 +41,7 @@ El panel se aparta al pulsar **Ejecutar** para dejar ver al robot: en el escrito
 2. **Seleccionar:** toca una ficha del programa. Queda rodeada de azul y aparecen sus botones en la zona de edición. Tócala de nuevo para soltarla.
 3. **Cambiar el número:** con la ficha seleccionada, usa **−** y **+**. Las fichas «repetir» y «esperar» tienen además **−10** y **+10**.
 4. **Cambiar el orden:** con la ficha seleccionada, **◀** y **▶** la mueven un puesto.
-5. **Quitar:** **✕** borra la ficha seleccionada.
+5. **Quitar:** **⌫** borra la ficha seleccionada.
 
 El programa se guarda solo en el navegador: al volver a abrir la página sigue ahí. Si cambias algo mientras el robot está ejecutando, el programa se detiene.
 
@@ -74,6 +76,7 @@ Cosas que conviene saber:
 
 - **Los giros son exactos:** el robot mide su rumbo y sigue girando hasta completar el ángulo. Con el número 2 da media vuelta y con el 4, una vuelta entera.
 - **Los tramos no son exactos:** el robot camina con físicas reales, así que puede resbalar o desviarse un poco, sobre todo al retroceder. Lo mismo le pasa al robot de verdad.
+- **En el modo 3D, no te salgas del círculo:** si el robot pasa del borde, se cae, y a los 5 segundos vuelve al punto de partida soltado desde 30 cm.
 - **Los obstáculos lo frenan:** si choca con una pared o un mueble, sigue moviendo las patas sin avanzar hasta terminar la ficha.
 
 ## Fichas de acción (naranjas)
@@ -186,4 +189,5 @@ Avanza despacio, luego deprisa, y termina dando una vuelta entera a velocidad no
 | «Si hay obstáculo» no hace nada | No hay nada a menos de 25 cm, o estás en modo 3D | Pruébalo en realidad aumentada, frente a una pared |
 | El robot no llega donde yo quería | Los tramos dependen del suelo y de los choques | Ajusta el número de la ficha y prueba con **⏭ Paso** |
 | No veo el panel | Se aparta al ejecutar | Toca el cuerpo del robot; en las Quest, también su botón redondo o la palma de la otra mano hacia ti |
+| El robot se ha caído del círculo (modo 3D) | Ha pasado del borde | Espera 5 segundos: vuelve solo al punto de partida |
 | El robot se ha caído o se ha quedado atascado | Las físicas son reales | Pulsa **📍 Mover** (o **⟲ Inicio** en modo 3D) y colócalo de nuevo |

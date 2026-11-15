@@ -150,14 +150,15 @@
   #tests .fail::before { content: "✗ "; }
 
   /* Panel de fichas del móvil en AR: un cajón con dos alturas. Recogido, es estrecho
-     (40 % del ancho) y está del lado de la mano dominante: botones de ejecución y la
-     tira del programa. Ampliado, ocupa el ancho y añade edición, borrado y paleta. */
+     (40 % del ancho) y está del lado de la mano dominante: botones de ejecución y el
+     programa. Ampliado, ocupa el ancho y añade edición, borrado y paleta. El programa
+     siempre muestra tres filas de fichas, aunque el cajón pase del tercio inferior. */
   #blocks { position: absolute; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom));
-    width: clamp(9.5rem, 40vw, 23.75rem); max-height: 33.333vh; display: flex; flex-direction: column;
+    width: clamp(9.5rem, 40vw, 23.75rem); max-height: 70vh; display: flex; flex-direction: column;
     background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-container); backdrop-filter: blur(8px); overflow: hidden; }
   #blocks[hidden] { display: none; }
   #blocks.left { right: auto; left: 12px; }
-  #blocks.expanded { width: min(calc(100vw - 24px), 30rem); max-height: 42vh; }
+  #blocks.expanded { width: min(calc(100vw - 24px), 30rem); max-height: 70vh; }
   #blocks .grab { position: relative; flex: none; width: 100%; justify-content: space-between; padding: 0.375rem 0.625rem 0;
     border: none; border-radius: 0; background: none; color: var(--muted); font-size: 0.75rem; font-weight: 600; touch-action: none; }
   #blocks .grab::before { content: ""; position: absolute; top: 5px; left: 50%; width: 36px; height: 4px; margin-left: -18px;
@@ -169,12 +170,19 @@
   #blocks:not(.expanded) .runbar .lbl { display: none; }
   #blocks:not(.expanded) .runbar { gap: 4px; padding: 0 4px 6px; }
   #blocks:not(.expanded) .body { padding: 0 4px 4px; }
-  #blocks:not(.expanded) .prog { gap: 4px; scrollbar-width: thin; }
+  #blocks:not(.expanded) .prog { column-gap: 4px; padding-left: 4px; padding-right: 4px; }
   #blocks .body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 0 0.5rem 0.5rem; overscroll-behavior: contain; }
   #blocks .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--touch), 1fr)); gap: 0.375rem; }
-  #blocks .prog { row-gap: calc(8px + var(--depth, 0) * 5px); padding-bottom: calc(4px + var(--depth, 0) * 5px); }
-  #blocks:not(.expanded) .prog { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: var(--touch);
-    overflow-x: auto; overflow-y: hidden; }
+  /* Programa: fichas de tamaño fijo, tres filas siempre a la vista (desplazable si hay más) */
+  #blocks .prog { position: relative; flex: none; grid-template-columns: repeat(auto-fill, var(--touch)); grid-auto-rows: var(--touch);
+    justify-content: start; padding: 6px 0.5rem; overflow-x: hidden; overflow-y: auto; scrollbar-width: thin;
+    overscroll-behavior: contain; --rg: calc(8px + var(--depth, 0) * 5px);
+    height: calc(3 * var(--touch) + 2 * var(--rg) + 12px + var(--depth, 0) * 5px); }
+  #blocks .prog.empty { display: flex; height: auto; align-items: center; justify-content: center; }
+  #blocks .prog.empty .hint { margin: 0; text-align: center; }
+  /* Paleta: tamaño ajustable en Visualización (hasta +33 %); el programa no cambia */
+  #blocks .more .grid { grid-template-columns: repeat(auto-fill, calc(var(--touch) * var(--pal, 1))); }
+  #blocks .prog { row-gap: var(--rg); padding-bottom: calc(6px + var(--depth, 0) * 5px); }
   #blocks:not(.expanded) .more { display: none; }
   #blocks .tile { position: relative; aspect-ratio: 1; min-width: var(--touch); padding: 0; border: none;
     border-radius: var(--r-control); color: #fff; }
@@ -266,6 +274,7 @@
       <label class="check"><input type="checkbox" id="chkEnv"> Ver entorno detectado</label>
       <label class="check"><input type="checkbox" id="chkHud"> Rótulo flotante (visor)</label>
       <label class="check"><input type="checkbox" id="chkPerf"> Ver rendimiento</label>
+      <div class="servo"><label for="rngPalette">Tamaño de la paleta</label><input type="range" id="rngPalette" min="100" max="133" step="1" value="100"><output id="outPalette" for="rngPalette">100 %</output></div>
       <p id="envInfo"></p>
       <p id="perfInfo"></p>
     </details>
@@ -1226,11 +1235,11 @@ const physics = {
     world.numSolverIterations = PHYS.iterations;
     this.world = world;
 
-    // Suelo: plano Y = 0 del sistema de colocación
+    // Suelo: plano Y = 0 del sistema de colocación (en modo 3D, el círculo de la alfombra)
     const ground = world.createRigidBody(R.RigidBodyDesc.fixed().setTranslation(0, -1, 0));
     this.groundBody = ground;
-    this.ground = world.createCollider(R.ColliderDesc.cuboid(400, 1, 400)
-      .setFriction(PHYS.friction.ground).setCollisionGroups(groups(GROUP.env, 0xffff)), ground);
+    this.ground = null;
+    this.setDisc(this.disc);
     // Entorno real: mallas fijas en el sistema de colocación
     this.envBody = world.createRigidBody(R.RigidBodyDesc.fixed());
     this.env = new Map();
@@ -1361,6 +1370,22 @@ const physics = {
   clearEnv() {
     for (const key of [...this.env.keys()]) this.removeEnv(key);
     this.setGround(true);
+  },
+
+  /** Modo 3D: el suelo es el círculo de la alfombra y el robot puede caerse por su borde. */
+  disc: true,
+  DISC_RADIUS: 4, // m, igual que la alfombra
+
+  /** Suelo circular (modo 3D) o plano ilimitado (realidad aumentada). */
+  setDisc(on) {
+    if (this.ground && this.disc === on) return;
+    this.disc = on;
+    const R = this.R, S = PHYS.scale, enabled = this.ground ? this.ground.isEnabled() : true;
+    if (this.ground) this.world.removeCollider(this.ground, false);
+    const desc = on ? R.ColliderDesc.cylinder(1, this.DISC_RADIUS * S) : R.ColliderDesc.cuboid(400, 1, 400);
+    this.ground = this.world.createCollider(desc.setFriction(PHYS.friction.ground)
+      .setCollisionGroups(groups(GROUP.env, 0xffff)), this.groundBody);
+    this.ground.setEnabled(enabled);
   },
 
   /** Activa o desactiva el suelo plano infinito del punto de colocación. */
@@ -1888,6 +1913,7 @@ const ar = {
     scene.background = null;
     document.documentElement.classList.add('ar');
     floor.visible = false;
+    if (physics.ready) physics.setDisc(false); else physics.disc = false; // en AR, el suelo no tiene borde
     placement.visible = false;
     arShadow.visible = true;
     renderer.xr.setFoveation(1); // menos resolución en los bordes de la vista: no se nota y ahorra
@@ -1999,6 +2025,7 @@ const ar = {
     scene.background = BG;
     document.documentElement.classList.remove('ar');
     floor.visible = true;
+    if (physics.ready) physics.setDisc(true); else physics.disc = true;
     arShadow.visible = false;
     placement.visible = true;
     placement.position.set(0, 0, 0);
@@ -2465,6 +2492,28 @@ const blockPanel = {
   _head: new THREE.Vector3(),
   _v: new THREE.Vector3(),
 
+  /** Escala de las fichas de la paleta (1 a 1,33); el panel crece hacia abajo para que quepan. */
+  paletteScale: 1,
+
+  setPaletteScale(scale) {
+    this.paletteScale = Math.min(1.33, Math.max(1, scale));
+    document.getElementById('blocks').style.setProperty('--pal', this.paletteScale);
+    const H = 840 + Math.ceil(3 * 118 * (this.paletteScale - 1));
+    if (this.canvas && H !== this.H) {
+      // Lienzo, textura y plano nuevos con la altura nueva (el ancho no cambia)
+      this.H = H;
+      this.canvas.height = H;
+      const old = this.mesh.material.map, map = new THREE.CanvasTexture(this.canvas);
+      map.colorSpace = THREE.SRGBColorSpace; map.anisotropy = 8;
+      this.mesh.material.map = map; this.mesh.material.needsUpdate = true;
+      old.dispose();
+      this.mesh.geometry.dispose();
+      this.mesh.geometry = new THREE.PlaneGeometry(1, this.H / this.W);
+    } else this.H = H;
+    this.dirty = true;
+    dock.shown && dock.render();
+  },
+
   init() {
     this.canvas = Object.assign(document.createElement('canvas'), { width: this.W, height: this.H });
     this.ctx = this.canvas.getContext('2d');
@@ -2867,7 +2916,7 @@ const blockPanel = {
       }
       B(84, null, 'left', () => program.move(i, -1), 'Mover a la izquierda', 'ml');
       B(84, null, 'right', () => program.move(i, 1), 'Mover a la derecha', 'mr');
-      B(84, null, 'close', () => program.remove(i), 'Quitar la ficha', 'rm');
+      B(84, null, 'backspace', () => program.remove(i), 'Quitar la ficha', 'rm');
       let x = W - 20;
       for (const b of buttons.slice().reverse()) {
         x -= b.w;
@@ -2881,15 +2930,16 @@ const blockPanel = {
 
     // Paleta
     const full = program.tokens.length >= program.MAX;
+    const p = Math.round(100 * this.paletteScale); // tamaño de las fichas de la paleta (ajustable)
     PALETTE.forEach(([name, types], r) => {
-      const y = 488 + r * 118;
-      label(name, 32, y + 50, 30, C.muted, false, 'left');
+      const y = 488 + r * (p + 18);
+      label(name, 32, y + p / 2, 30, C.muted, false, 'left');
       types.forEach((type, k) => {
-        const x = 200 + k * 116;
+        const x = 200 + k * (p + 16);
         c.globalAlpha = full ? 0.35 : 1;
-        tile({ type, n: T[type].n ?? 1 }, x, y, 100, null);
+        tile({ type, n: T[type].n ?? 1 }, x, y, p, null);
         c.globalAlpha = 1;
-        zone(x, y, 100, 100, () => program.add(type), `Añadir ${T[type].name}`, `add-${type}`);
+        zone(x, y, p, p, () => program.add(type), `Añadir ${T[type].name}`, `add-${type}`);
       });
     });
 
@@ -3046,17 +3096,20 @@ const dock = {
       button('step', 'Paso', 'step'),
       button('stop', 'Parar', 'stop', undefined, { className: 'halt' }));
 
-    // Programa (con sus corchetes), borrado y paleta
-    const body = el('div', { className: 'body' });
+    // Programa (con sus corchetes): fuera del cuerpo desplazable, siempre a la vista con tres filas
     const { rows, depth } = program.bracketRows();
     this.depth = Math.min(depth, 4);
+    let prog;
     if (program.tokens.length) {
-      const prog = el('div', { className: 'grid prog', role: 'group', ariaLabel: 'Programa' }, ...program.tokens.map((tok, i) =>
+      prog = el('div', { className: 'grid prog', role: 'group', ariaLabel: 'Programa' }, ...program.tokens.map((tok, i) =>
         tile(tok, 'sel', i, i === program.active ? 'active' : i === program.selected ? 'sel' : '', rows[i])));
       prog.style.setProperty('--depth', this.depth);
       for (const t of prog.children) t.setAttribute('aria-pressed', String(t.classList.contains('sel')));
-      body.append(prog);
-    } else body.append(el('p', { className: 'hint', textContent: expanded ? 'Toca las fichas de abajo para crear el programa.' : 'Sin fichas: amplía el panel.' }));
+    } else prog = el('div', { className: 'prog empty' },
+      el('p', { className: 'hint', textContent: expanded ? 'Toca las fichas de abajo para crear el programa.' : 'Sin fichas: amplía el panel.' }));
+
+    // Borrado y paleta, en el cuerpo desplazable
+    const body = el('div', { className: 'body' });
     const more = el('div', { className: 'more' });
     more.append(el('div', { className: 'row2' },
       button('backspace', 'Quitar', 'backspace', undefined, { title: 'Quita la ficha seleccionada o la última' }),
@@ -3074,7 +3127,7 @@ const dock = {
     body.append(more);
 
     // Edición de la ficha seleccionada, fija al pie
-    const kids = [grab, runbar, body];
+    const kids = [grab, runbar, prog, body];
     const sel = program.tokens[program.selected];
     if (sel) {
       const def = T[sel.type], ctrls = el('div', { className: 'ctrls' });
@@ -3086,19 +3139,25 @@ const dock = {
       }
       const top = el('div', { className: 'top' }, el('span', { className: 'name', textContent: def.name }),
         button('left', '', 'move', -1, { ariaLabel: 'Mover a la izquierda' }), button('right', '', 'move', 1, { ariaLabel: 'Mover a la derecha' }),
-        button('close', '', 'remove', undefined, { ariaLabel: 'Quitar la ficha' }));
+        button('backspace', '', 'remove', undefined, { ariaLabel: 'Quitar la ficha' }));
       kids.push(el('div', { className: 'editbar', role: 'group', ariaLabel: `Editar ${def.name}` }, top, ...(def.max ? [ctrls] : [])));
     }
 
-    // Al redibujar, el cuerpo conserva su desplazamiento (p. ej. al añadir fichas seguidas)
+    // Al redibujar, el cuerpo y el programa conservan su desplazamiento (p. ej. al añadir fichas seguidas)
     const old = this.el.querySelector('.body'), keep = old && this.el.dataset.mode === String(expanded);
-    const scroll = keep ? old.scrollTop : 0, strip = keep ? this.el.querySelector('.prog')?.scrollLeft ?? 0 : 0;
+    const scroll = keep ? old.scrollTop : 0, strip = this.el.querySelector('.prog')?.scrollTop ?? 0;
+    const grew = program.tokens.length > (this.count ?? 0);
+    this.count = program.tokens.length;
     this.el.dataset.mode = String(expanded);
     this.el.replaceChildren(...kids);
     body.scrollTop = scroll;
-    const prog = this.el.querySelector('.prog');
-    // Reducido: la tira se desplaza hasta la ficha en curso (o la última)
-    if (prog && !expanded) prog.scrollLeft = program.active >= 0 ? prog.children[program.active].offsetLeft - 8 : keep ? strip : prog.scrollWidth;
+    // El programa muestra la ficha en curso; si no, la seleccionada o la recién añadida
+    const focus = program.active >= 0 ? program.active : program.selected >= 0 ? program.selected : grew ? program.tokens.length - 1 : -1;
+    prog.scrollTop = strip;
+    const t = prog.children[focus];
+    if (t?.classList.contains('tile') && (t.offsetTop < prog.scrollTop || t.offsetTop + t.offsetHeight > prog.scrollTop + prog.clientHeight)) {
+      prog.scrollTop = t.offsetTop - 6;
+    }
   },
 };
 dock.init();
@@ -3369,7 +3428,7 @@ const help = {
     if (platform.arSupported) return ['En realidad aumentada', [
       'Pulsa «Entrar en AR» y da permiso a la cámara.',
       'Mueve el móvil apuntando al suelo o a una mesa hasta ver el anillo amarillo, y toca para colocar el robot.',
-      `El panel de fichas queda abajo a la ${dom}, reducido: Ejecutar, Paso, Parar y tu programa.`,
+      `El panel de fichas queda abajo a la ${dom}, reducido: Ejecutar, Paso, Parar y tu programa, con tres filas de fichas siempre a la vista.`,
       'Toca su cabecera, o desliza hacia arriba, para ampliarlo y ver la paleta; desliza hacia abajo para reducirlo.',
       'Arriba a la derecha: el alfiler recoloca el robot, ? abre esta ayuda y ✕ sale de la realidad aumentada.',
     ]];
@@ -3380,6 +3439,7 @@ const help = {
     return ['En este navegador', [
       'No hay realidad aumentada: el robot se ve en modo 3D, con el panel de fichas sobre él.',
       'Arrastra para girar la vista y usa la rueda para acercarla. Con el teclado, Tab recorre las fichas y los botones del panel.',
+      'Si el robot sale del círculo, se cae; a los 5 segundos vuelve al inicio.',
       'Las herramientas de ingeniería (servos, marchas, entorno y rendimiento) están plegadas al pie del panel de herramientas.',
       'Ábrelo en un móvil Android o en unas Meta Quest para verlo en tu habitación.',
     ]];
@@ -3492,6 +3552,15 @@ const ui = {
     option('chkEnv', 'kamear.verEntorno', (on) => environment.setDebug(on));
     option('chkHud', 'kamear.rotulo', (on) => { hud.enabled = on; });
     option('chkPerf', 'kamear.rendimiento', (on) => { perf.show = on; if (!on) document.getElementById('perfInfo').textContent = ''; });
+    // Tamaño de las fichas de la paleta (100 % a 133 %); el programa conserva su tamaño
+    const rngPalette = document.getElementById('rngPalette'), outPalette = document.getElementById('outPalette');
+    const applyPalette = () => { outPalette.textContent = `${rngPalette.value} %`; blockPanel.setPaletteScale(rngPalette.value / 100); };
+    try { const v = +localStorage.getItem('kamear.paleta'); if (v >= 100 && v <= 133) rngPalette.value = v; } catch { /* sin almacenamiento */ }
+    applyPalette();
+    rngPalette.addEventListener('input', applyPalette);
+    rngPalette.addEventListener('change', () => {
+      try { localStorage.setItem('kamear.paleta', rngPalette.value); } catch { /* sin almacenamiento */ }
+    });
     const selHand = document.getElementById('selHand');
     try { if (localStorage.getItem('kamear.mano') === 'left') selHand.value = 'left'; } catch { /* sin almacenamiento */ }
     hands.dominant = selHand.value;
@@ -3871,6 +3940,13 @@ function runSelfTest() {
     pose = physics.pose();
     check('físicas: caída desde 30 cm, aterriza de pie y entero', pose.up > 0.99 && physics.measured().every((v, i) => Math.abs(v - home[i]) < 3),
       `inclinación ${deg(Math.acos(Math.min(1, pose.up))).toFixed(1)}°`);
+    // Modo 3D: el suelo es el círculo de la alfombra
+    physics.reset(PHYS.startHeight / 1000, physics.DISC_RADIUS - 0.3, 0);
+    physics.simulate(1, () => home);
+    check('suelo 3D: dentro del círculo se apoya', physics.disc && Math.abs(physics.pose().y) < 0.05);
+    physics.reset(PHYS.startHeight / 1000, physics.DISC_RADIUS + 0.2, 0);
+    physics.simulate(1, () => home);
+    check('suelo 3D: fuera del círculo cae', physics.pose().y < -1, `altura ${physics.pose().y.toFixed(2)} m`);
     physics.reset();
   }
   applyAngles(home);
@@ -3902,6 +3978,24 @@ ui.init();
 ui.sync(robot.angles);
 
 let lastFrame = performance.now();
+/**
+ * Modo 3D: si el robot sale del círculo, cae; 5 s después vuelve al inicio,
+ * soltado desde 30 cm. `at`: instante en que empezó la caída (ms).
+ */
+const fall = {
+  at: 0, DELAY: 5000, HEIGHT: 0.3,
+  update(now) {
+    if (physics.body.translation().y / PHYS.scale >= -0.1) { this.at = 0; return; }
+    if (!this.at) {
+      this.at = now;
+      program.stop();
+      setStatus('El robot se ha caído del círculo: en 5 segundos vuelve al inicio.', 'info');
+    } else if (now - this.at > this.DELAY) {
+      this.at = 0;
+      physics.reset(this.HEIGHT);
+    }
+  },
+};
 renderer.setAnimationLoop((time, frame) => {
   const now = performance.now(), dt = (now - lastFrame) / 1000;
   lastFrame = now;
@@ -3911,8 +4005,9 @@ renderer.setAnimationLoop((time, frame) => {
     const t0 = performance.now();
     physics.update(dt);
     physMs = performance.now() - t0;
-    // Si se cae al vacío (por el borde de una mesa sin suelo detectado), vuelve a su sitio
-    if (physics.body.translation().y < -4 * PHYS.scale) {
+    if (!ar.session) fall.update(now);
+    else if (physics.body.translation().y < -4 * PHYS.scale) {
+      // Si se cae al vacío (por el borde de una mesa sin suelo detectado), vuelve a su sitio
       physics.reset();
       setStatus('El robot se ha caído fuera del entorno detectado; vuelve al punto de colocación.', 'info');
     }
@@ -3963,7 +4058,7 @@ try {
   perf.init();
   const params = new URLSearchParams(location.search);
   if (!params.has('test')) help.first();
-  window.kame = { robot, physics, PHYS, applyAngles, kame32, MOTIONS, compileMotion, platform, environment, ar, hud, program, blockPanel, dock, hands, perf, help, icons }; // para depurar desde la consola
+  window.kame = { robot, physics, PHYS, applyAngles, kame32, MOTIONS, compileMotion, platform, environment, ar, hud, program, blockPanel, dock, hands, perf, help, icons, fall }; // para depurar desde la consola
   if (new URLSearchParams(location.search).has('test')) runSelfTest();
   if (new URLSearchParams(location.search).has('env')) environment.demo();
 } catch (e) {
